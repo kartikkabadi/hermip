@@ -1,5 +1,21 @@
 # clawhip
 
+This is a standalone Discord bot / system daemon that whips your claw into organized contextual notifications.
+
+Human install pitch:
+
+```text
+Just tag @openclaw and say: install this https://github.com/Yeachan-Heo/clawhip
+```
+
+Then OpenClaw should:
+- clone the repo
+- run `install.sh`
+- read `SKILL.md` and attach the skill
+- scaffold config / presets
+- start the daemon
+- run live verification for issue / PR / git / tmux / install flows
+
 ## Description
 
 Operational spec for OpenClaw / Clawdbot agents consuming this repo.
