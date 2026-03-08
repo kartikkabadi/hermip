@@ -33,7 +33,7 @@ async fn real_main() -> Result<()> {
     let config_path = cli.config_path();
     let config = Arc::new(AppConfig::load_or_default(&config_path)?);
 
-    match cli.command {
+    match cli.command.unwrap_or(Commands::Start { port: None }) {
         Commands::Start { port } => daemon::run(config, port).await,
         Commands::Status => {
             let client = DaemonClient::from_config(config.as_ref());
@@ -43,40 +43,79 @@ async fn real_main() -> Result<()> {
         }
         Commands::Send { channel, message } => {
             let client = DaemonClient::from_config(config.as_ref());
-            client.send_event(&IncomingEvent::custom(channel, message)).await
+            client
+                .send_event(&IncomingEvent::custom(channel, message))
+                .await
         }
         Commands::Git { command } => {
             let client = DaemonClient::from_config(config.as_ref());
             let event = match command {
-                GitCommands::Commit { repo, branch, commit, summary, channel } => {
-                    IncomingEvent::git_commit(repo, branch, commit, summary, channel)
-                }
-                GitCommands::BranchChanged { repo, old_branch, new_branch, channel } => {
-                    IncomingEvent::git_branch_changed(repo, old_branch, new_branch, channel)
-                }
+                GitCommands::Commit {
+                    repo,
+                    branch,
+                    commit,
+                    summary,
+                    channel,
+                } => IncomingEvent::git_commit(repo, branch, commit, summary, channel),
+                GitCommands::BranchChanged {
+                    repo,
+                    old_branch,
+                    new_branch,
+                    channel,
+                } => IncomingEvent::git_branch_changed(repo, old_branch, new_branch, channel),
             };
             client.send_event(&event).await
         }
         Commands::Github { command } => {
             let client = DaemonClient::from_config(config.as_ref());
             let event = match command {
-                GithubCommands::IssueOpened { repo, number, title, channel } => {
-                    IncomingEvent::github_issue_opened(repo, number, title, channel)
-                }
-                GithubCommands::PrStatusChanged { repo, number, title, old_status, new_status, url, channel } => {
-                    IncomingEvent::git_pr_status_changed(repo, number, title, old_status, new_status, url, channel)
-                }
+                GithubCommands::IssueOpened {
+                    repo,
+                    number,
+                    title,
+                    channel,
+                } => IncomingEvent::github_issue_opened(repo, number, title, channel),
+                GithubCommands::PrStatusChanged {
+                    repo,
+                    number,
+                    title,
+                    old_status,
+                    new_status,
+                    url,
+                    channel,
+                } => IncomingEvent::git_pr_status_changed(
+                    repo, number, title, old_status, new_status, url, channel,
+                ),
             };
             client.send_event(&event).await
         }
         Commands::Tmux { command } => match command {
-            TmuxCommands::Keyword { session, keyword, line, channel } => {
+            TmuxCommands::Keyword {
+                session,
+                keyword,
+                line,
+                channel,
+            } => {
                 let client = DaemonClient::from_config(config.as_ref());
-                client.send_event(&IncomingEvent::tmux_keyword(session, keyword, line, channel)).await
+                client
+                    .send_event(&IncomingEvent::tmux_keyword(
+                        session, keyword, line, channel,
+                    ))
+                    .await
             }
-            TmuxCommands::Stale { session, pane, minutes, last_line, channel } => {
+            TmuxCommands::Stale {
+                session,
+                pane,
+                minutes,
+                last_line,
+                channel,
+            } => {
                 let client = DaemonClient::from_config(config.as_ref());
-                client.send_event(&IncomingEvent::tmux_stale(session, pane, minutes, last_line, channel)).await
+                client
+                    .send_event(&IncomingEvent::tmux_stale(
+                        session, pane, minutes, last_line, channel,
+                    ))
+                    .await
             }
             TmuxCommands::New(args) => tmux_wrapper::run(args, config.as_ref()).await,
         },
