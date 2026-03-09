@@ -73,6 +73,7 @@ pub struct RouteRule {
     #[serde(default)]
     pub filter: BTreeMap<String, String>,
     pub channel: Option<String>,
+    pub webhook: Option<String>,
     pub mention: Option<String>,
     #[serde(default)]
     pub allow_dynamic_tokens: bool,
@@ -160,6 +161,8 @@ pub struct TmuxSessionMonitor {
     pub session: String,
     #[serde(default)]
     pub keywords: Vec<String>,
+    #[serde(default = "default_keyword_window_secs")]
+    pub keyword_window_secs: u64,
     #[serde(default = "default_stale_minutes")]
     pub stale_minutes: u64,
     pub channel: Option<String>,
@@ -172,6 +175,7 @@ impl Default for TmuxSessionMonitor {
         Self {
             session: String::new(),
             keywords: Vec::new(),
+            keyword_window_secs: default_keyword_window_secs(),
             stale_minutes: default_stale_minutes(),
             channel: None,
             mention: None,
@@ -209,6 +213,9 @@ fn default_remote() -> String {
 fn default_stale_minutes() -> u64 {
     10
 }
+fn default_keyword_window_secs() -> u64 {
+    30
+}
 fn default_true() -> bool {
     true
 }
@@ -242,6 +249,7 @@ impl AppConfig {
         }
         let raw = fs::read_to_string(path)?;
         let mut config: Self = toml::from_str(&raw)?;
+        config.normalize();
         if config.defaults.channel.is_none() {
             config.defaults.channel = config.discord.legacy_default_channel.clone();
         }
@@ -287,6 +295,70 @@ impl AppConfig {
         } else {
             "missing"
         }
+    }
+
+    pub fn webhook_route_count(&self) -> usize {
+        self.routes
+            .iter()
+            .filter(|route| normalize_secret(route.webhook.clone()).is_some())
+            .count()
+    }
+
+    pub fn has_webhook_routes(&self) -> bool {
+        self.webhook_route_count() > 0
+    }
+
+    pub fn validate(&self) -> Result<()> {
+        for (index, route) in self.routes.iter().enumerate() {
+            let has_channel = normalize_secret(route.channel.clone()).is_some();
+            let has_webhook = normalize_secret(route.webhook.clone()).is_some();
+            if has_channel && has_webhook {
+                return Err(format!(
+                    "route #{} ({}) cannot set both channel and webhook",
+                    index + 1,
+                    route.event
+                )
+                .into());
+            }
+        }
+
+        if self.effective_token().is_none() && !self.has_webhook_routes() {
+            return Err(
+                "missing Discord delivery config: configure a Discord bot token or at least one route webhook"
+                    .into(),
+            );
+        }
+
+        Ok(())
+    }
+
+    pub fn scaffold_webhook_quickstart(&mut self, webhook: String) {
+        let webhook = webhook.trim().to_string();
+        if webhook.is_empty() {
+            return;
+        }
+
+        if let Some(route) = self.routes.iter_mut().find(|route| {
+            route.event == "*"
+                && route.filter.is_empty()
+                && route.mention.is_none()
+                && route.template.is_none()
+        }) {
+            route.channel = None;
+            route.webhook = Some(webhook);
+            return;
+        }
+
+        self.routes.push(RouteRule {
+            event: "*".to_string(),
+            filter: BTreeMap::new(),
+            channel: None,
+            webhook: Some(webhook),
+            mention: None,
+            allow_dynamic_tokens: false,
+            format: None,
+            template: None,
+        });
     }
 
     pub fn daemon_base_url(&self) -> String {
@@ -354,6 +426,7 @@ impl AppConfig {
             "  Default channel: {}",
             self.defaults.channel.as_deref().unwrap_or("<unset>")
         );
+        println!("  Webhook routes: {}", self.routes_with_webhooks());
         println!("  Default format: {}", self.defaults.format.as_str());
         println!("  Routes: {}", self.routes.len());
         println!("  Git monitors: {}", self.monitors.git.repos.len());
@@ -365,6 +438,46 @@ impl AppConfig {
         println!(
             "Sections: [daemon], [[routes]], [[monitors.git.repos]], [[monitors.tmux.sessions]]"
         );
+        println!(
+            "Routes may set either channel = \"...\" or webhook = \"https://discord.com/api/webhooks/...\"."
+        );
+        println!(
+            r#"Webhook example: [[routes]] event = "tmux.keyword" webhook = "https://discord.com/api/webhooks/...""#
+        );
+    }
+
+    fn normalize(&mut self) {
+        self.discord.bot_token = normalize_secret(self.discord.bot_token.clone());
+        self.discord.legacy_default_channel =
+            normalize_text(self.discord.legacy_default_channel.clone());
+        self.defaults.channel = normalize_text(self.defaults.channel.clone());
+        self.monitors.github_token = normalize_secret(self.monitors.github_token.clone());
+
+        for route in &mut self.routes {
+            route.channel = normalize_text(route.channel.clone());
+            route.webhook = normalize_text(route.webhook.clone());
+            route.mention = normalize_text(route.mention.clone());
+            route.template = normalize_text(route.template.clone());
+        }
+
+        for repo in &mut self.monitors.git.repos {
+            repo.channel = normalize_text(repo.channel.clone());
+            repo.mention = normalize_text(repo.mention.clone());
+            repo.name = normalize_text(repo.name.clone());
+            repo.github_repo = normalize_text(repo.github_repo.clone());
+        }
+
+        for session in &mut self.monitors.tmux.sessions {
+            session.channel = normalize_text(session.channel.clone());
+            session.mention = normalize_text(session.mention.clone());
+        }
+    }
+
+    fn routes_with_webhooks(&self) -> usize {
+        self.routes
+            .iter()
+            .filter(|route| normalize_text(route.webhook.clone()).is_some())
+            .count()
     }
 }
 
@@ -396,12 +509,18 @@ fn prompt_format(default: Option<MessageFormat>) -> Result<MessageFormat> {
 }
 
 fn empty_to_none(value: String) -> Option<String> {
-    let trimmed = value.trim();
-    if trimmed.is_empty() {
-        None
-    } else {
-        Some(trimmed.to_string())
-    }
+    normalize_text(Some(value))
+}
+
+fn normalize_text(value: Option<String>) -> Option<String> {
+    value.and_then(|value| {
+        let trimmed = value.trim();
+        if trimmed.is_empty() {
+            None
+        } else {
+            Some(trimmed.to_string())
+        }
+    })
 }
 
 #[cfg(test)]
@@ -454,5 +573,59 @@ mod tests {
             }),
             "env"
         );
+    }
+
+    #[test]
+    fn webhook_route_satisfies_delivery_validation_without_bot_token() {
+        let config = AppConfig {
+            routes: vec![RouteRule {
+                event: "tmux.keyword".into(),
+                webhook: Some("https://discord.com/api/webhooks/123/abc".into()),
+                ..RouteRule::default()
+            }],
+            ..AppConfig::default()
+        };
+
+        assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn route_cannot_set_channel_and_webhook() {
+        let config = AppConfig {
+            discord: DiscordConfig {
+                bot_token: Some("token".into()),
+                legacy_default_channel: None,
+            },
+            routes: vec![RouteRule {
+                event: "tmux.keyword".into(),
+                channel: Some("123".into()),
+                webhook: Some("https://discord.com/api/webhooks/123/abc".into()),
+                ..RouteRule::default()
+            }],
+            ..AppConfig::default()
+        };
+
+        let error = config.validate().unwrap_err().to_string();
+        assert!(error.contains("cannot set both channel and webhook"));
+    }
+
+    #[test]
+    fn setup_scaffold_adds_tmux_keyword_webhook_route() {
+        let mut config = AppConfig::default();
+        config.scaffold_webhook_quickstart(" https://discord.com/api/webhooks/123/abc ".into());
+
+        assert_eq!(config.routes.len(), 1);
+        assert_eq!(config.routes[0].event, "*");
+        assert_eq!(
+            config.routes[0].webhook.as_deref(),
+            Some("https://discord.com/api/webhooks/123/abc")
+        );
+        assert_eq!(config.routes[0].channel, None);
+    }
+
+    #[test]
+    fn tmux_session_monitor_defaults_keyword_window_to_thirty_seconds() {
+        let session = TmuxSessionMonitor::default();
+        assert_eq!(session.keyword_window_secs, 30);
     }
 }

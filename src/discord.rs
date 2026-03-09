@@ -5,32 +5,49 @@ use serde_json::json;
 
 use crate::Result;
 use crate::config::AppConfig;
+use crate::router::DeliveryTarget;
 
 #[derive(Clone)]
 pub struct DiscordClient {
-    client: reqwest::Client,
+    bot_client: Option<reqwest::Client>,
+    webhook_client: reqwest::Client,
     api_base: String,
 }
 
 impl DiscordClient {
     pub fn from_config(config: Arc<AppConfig>) -> Result<Self> {
-        let token = config
-            .effective_token()
-            .ok_or_else(|| "missing Discord bot token; configure ~/.clawhip/config.toml or DISCORD_TOKEN (CLAWHIP_DISCORD_BOT_TOKEN is also supported)".to_string())?;
-        let mut headers = HeaderMap::new();
-        headers.insert(
-            AUTHORIZATION,
-            HeaderValue::from_str(&format!("Bot {token}"))?,
-        );
-        headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
+        let bot_client = if let Some(token) = config.effective_token() {
+            let mut headers = HeaderMap::new();
+            headers.insert(
+                AUTHORIZATION,
+                HeaderValue::from_str(&format!("Bot {token}"))?,
+            );
+            headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
 
-        let client = reqwest::Client::builder()
-            .default_headers(headers)
-            .build()?;
+            Some(
+                reqwest::Client::builder()
+                    .default_headers(headers)
+                    .build()?,
+            )
+        } else {
+            None
+        };
         let api_base = std::env::var("CLAWHIP_DISCORD_API_BASE")
             .unwrap_or_else(|_| "https://discord.com/api/v10".to_string());
+        let webhook_client = reqwest::Client::new();
 
-        Ok(Self { client, api_base })
+        Ok(Self {
+            bot_client,
+            webhook_client,
+            api_base,
+        })
+    }
+
+    pub async fn send(&self, target: &DeliveryTarget, content: &str) -> Result<()> {
+        match target {
+            DeliveryTarget::Channel(channel_id) => self.send_message(channel_id, content).await,
+            DeliveryTarget::Webhook(webhook_url) => self.send_webhook(webhook_url, content).await,
+        }
     }
 
     pub async fn send_message(&self, channel_id: &str, content: &str) -> Result<()> {
@@ -39,8 +56,12 @@ impl DiscordClient {
             self.api_base.trim_end_matches('/'),
             channel_id
         );
+        let client = self.bot_client.as_ref().ok_or_else(|| {
+            "missing Discord bot token for channel delivery; configure [discord].token or use a route webhook"
+                .to_string()
+        })?;
         let response = self
-            .client
+            .client_for_channel(client)
             .post(url)
             .json(&json!({ "content": content }))
             .send()
@@ -53,5 +74,57 @@ impl DiscordClient {
         let status = response.status();
         let body = response.text().await.unwrap_or_default();
         Err(format!("Discord API request failed with {status}: {body}").into())
+    }
+
+    pub async fn send_webhook(&self, webhook_url: &str, content: &str) -> Result<()> {
+        let response = self
+            .webhook_client
+            .post(webhook_url_with_wait(webhook_url))
+            .json(&json!({ "content": content }))
+            .send()
+            .await?;
+
+        if response.status().is_success() {
+            return Ok(());
+        }
+
+        let status = response.status();
+        let body = response.text().await.unwrap_or_default();
+        Err(format!("Discord webhook request failed with {status}: {body}").into())
+    }
+
+    fn client_for_channel<'a>(&'a self, client: &'a reqwest::Client) -> &'a reqwest::Client {
+        client
+    }
+}
+
+fn webhook_url_with_wait(webhook_url: &str) -> String {
+    if webhook_url.contains("wait=") {
+        webhook_url.to_string()
+    } else if webhook_url.contains('?') {
+        format!("{webhook_url}&wait=true")
+    } else {
+        format!("{webhook_url}?wait=true")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn webhook_urls_gain_wait_true_by_default() {
+        assert_eq!(
+            webhook_url_with_wait("https://discord.com/api/webhooks/1/abc"),
+            "https://discord.com/api/webhooks/1/abc?wait=true"
+        );
+        assert_eq!(
+            webhook_url_with_wait("https://discord.com/api/webhooks/1/abc?thread_id=7"),
+            "https://discord.com/api/webhooks/1/abc?thread_id=7&wait=true"
+        );
+        assert_eq!(
+            webhook_url_with_wait("https://discord.com/api/webhooks/1/abc?wait=false"),
+            "https://discord.com/api/webhooks/1/abc?wait=false"
+        );
     }
 }

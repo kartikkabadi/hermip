@@ -12,7 +12,8 @@ if ! tmux has-session -t "$SESSION" 2>/dev/null; then
   exit 1
 fi
 
-# Send the prompt text followed by Enter
-tmux send-keys -t "$SESSION" "$PROMPT" Enter
+# Send the prompt text literally, then press Enter separately
+tmux send-keys -t "$SESSION" -l "$PROMPT"
+tmux send-keys -t "$SESSION" Enter
 
 echo "✓ Sent to $SESSION (unverified): ${PROMPT:0:80}..."

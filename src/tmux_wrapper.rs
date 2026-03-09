@@ -10,6 +10,7 @@ use crate::cli::{TmuxNewArgs, TmuxWatchArgs, TmuxWrapperFormat};
 use crate::client::DaemonClient;
 use crate::config::AppConfig;
 use crate::events::IncomingEvent;
+use crate::keyword_window::{PendingKeywordHits, collect_keyword_hits};
 use crate::monitor::RegisteredTmuxSession;
 
 pub async fn run(args: TmuxNewArgs, config: &AppConfig) -> Result<()> {
@@ -41,6 +42,7 @@ struct TmuxMonitorArgs {
     channel: Option<String>,
     mention: Option<String>,
     keywords: Vec<String>,
+    keyword_window_secs: u64,
     stale_minutes: u64,
     format: Option<TmuxWrapperFormat>,
 }
@@ -52,6 +54,7 @@ impl From<&TmuxNewArgs> for TmuxMonitorArgs {
             channel: value.channel.clone(),
             mention: value.mention.clone(),
             keywords: value.keywords.clone(),
+            keyword_window_secs: default_keyword_window_secs(),
             stale_minutes: value.stale_minutes,
             format: value.format,
         }
@@ -65,6 +68,7 @@ impl From<&TmuxWatchArgs> for TmuxMonitorArgs {
             channel: value.channel.clone(),
             mention: value.mention.clone(),
             keywords: value.keywords.clone(),
+            keyword_window_secs: default_keyword_window_secs(),
             stale_minutes: value.stale_minutes,
             format: value.format,
         }
@@ -81,6 +85,7 @@ async fn register_and_start_monitor(
         channel: args.channel.clone(),
         mention: args.mention.clone(),
         keywords: args.keywords.clone(),
+        keyword_window_secs: args.keyword_window_secs,
         stale_minutes: args.stale_minutes,
         format: args.format.map(Into::into),
         active_wrapper_monitor: true,
@@ -101,6 +106,7 @@ struct PaneState {
     snapshot: String,
     last_change: Instant,
     last_stale_notification: Option<Instant>,
+    pending_keyword_hits: Option<PendingKeywordHits>,
 }
 
 #[derive(Clone)]
@@ -111,16 +117,11 @@ struct PaneSnapshot {
     content: String,
 }
 
-#[derive(Clone)]
-struct KeywordHit {
-    keyword: String,
-    line: String,
-}
-
 async fn monitor_session(args: TmuxMonitorArgs, client: DaemonClient) -> Result<()> {
     let mut state: HashMap<String, PaneState> = HashMap::new();
     let poll_interval = Duration::from_secs(1);
     let stale_after = Duration::from_secs(args.stale_minutes.max(1) * 60);
+    let keyword_window = Duration::from_secs(args.keyword_window_secs.max(1));
     let keywords = args
         .keywords
         .iter()
@@ -130,6 +131,15 @@ async fn monitor_session(args: TmuxMonitorArgs, client: DaemonClient) -> Result<
 
     loop {
         if !session_exists(&args.session).await? {
+            flush_removed_panes(
+                &mut state,
+                &HashSet::new(),
+                &args,
+                &client,
+                Instant::now(),
+                true,
+            )
+            .await?;
             break;
         }
 
@@ -154,22 +164,28 @@ async fn monitor_session(args: TmuxMonitorArgs, client: DaemonClient) -> Result<
                             snapshot: pane.content,
                             last_change: now,
                             last_stale_notification: None,
+                            pending_keyword_hits: None,
                         },
                     );
                 }
                 Some(existing) => {
+                    flush_pending_keyword_hits(
+                        existing,
+                        &args,
+                        &client,
+                        now,
+                        keyword_window,
+                        false,
+                    )
+                    .await?;
                     if existing.content_hash != hash {
                         let hits =
                             collect_keyword_hits(&existing.snapshot, &pane.content, &keywords);
-                        for hit in hits {
-                            let mut event = IncomingEvent::tmux_keyword(
-                                pane.session.clone(),
-                                hit.keyword,
-                                hit.line,
-                                args.channel.clone(),
-                            );
-                            event.format = args.format.map(Into::into);
-                            client.send_event(&event).await?;
+                        if !hits.is_empty() {
+                            existing
+                                .pending_keyword_hits
+                                .get_or_insert_with(|| PendingKeywordHits::new(now))
+                                .push(hits);
                         }
 
                         existing.session = pane.session;
@@ -184,14 +200,12 @@ async fn monitor_session(args: TmuxMonitorArgs, client: DaemonClient) -> Result<
                             .map(|previous| now.duration_since(previous) >= stale_after)
                             .unwrap_or(true)
                     {
-                        let mut event = IncomingEvent::tmux_stale(
+                        let event = tmux_stale_event(
+                            &args,
                             existing.session.clone(),
                             existing.pane_name.clone(),
-                            args.stale_minutes,
                             latest_line,
-                            args.channel.clone(),
                         );
-                        event.format = args.format.map(Into::into);
                         client.send_event(&event).await?;
                         existing.last_stale_notification = Some(now);
                     }
@@ -199,10 +213,102 @@ async fn monitor_session(args: TmuxMonitorArgs, client: DaemonClient) -> Result<
             }
         }
 
+        flush_removed_panes(&mut state, &active, &args, &client, now, true).await?;
         state.retain(|pane_id, _| active.contains(pane_id));
         sleep(poll_interval).await;
     }
 
+    Ok(())
+}
+
+fn tmux_keyword_event(
+    args: &TmuxMonitorArgs,
+    session: String,
+    hits: Vec<(String, String)>,
+) -> IncomingEvent {
+    let mut event = IncomingEvent::tmux_keywords(session, hits, args.channel.clone());
+    event.format = args.format.map(Into::into);
+    event.mention = args.mention.clone();
+    event
+}
+
+fn tmux_stale_event(
+    args: &TmuxMonitorArgs,
+    session: String,
+    pane: String,
+    last_line: String,
+) -> IncomingEvent {
+    let mut event = IncomingEvent::tmux_stale(
+        session,
+        pane,
+        args.stale_minutes,
+        last_line,
+        args.channel.clone(),
+    );
+    event.format = args.format.map(Into::into);
+    event.mention = args.mention.clone();
+    event
+}
+
+async fn flush_pending_keyword_hits(
+    pane: &mut PaneState,
+    args: &TmuxMonitorArgs,
+    client: &DaemonClient,
+    now: Instant,
+    keyword_window: Duration,
+    force: bool,
+) -> Result<()> {
+    let should_flush = pane
+        .pending_keyword_hits
+        .as_ref()
+        .map(|pending| force || pending.ready_to_flush(now, keyword_window))
+        .unwrap_or(false);
+    if !should_flush {
+        return Ok(());
+    }
+
+    let Some(pending) = pane.pending_keyword_hits.take() else {
+        return Ok(());
+    };
+    let hits = pending
+        .into_hits()
+        .into_iter()
+        .map(|hit| (hit.keyword, hit.line))
+        .collect::<Vec<_>>();
+    if hits.is_empty() {
+        return Ok(());
+    }
+
+    let event = tmux_keyword_event(args, pane.session.clone(), hits);
+    client.send_event(&event).await
+}
+
+async fn flush_removed_panes(
+    state: &mut HashMap<String, PaneState>,
+    active: &HashSet<String>,
+    args: &TmuxMonitorArgs,
+    client: &DaemonClient,
+    now: Instant,
+    force: bool,
+) -> Result<()> {
+    let keys_to_remove = state
+        .keys()
+        .filter(|pane_id| !active.contains(*pane_id))
+        .cloned()
+        .collect::<Vec<_>>();
+    for pane_id in keys_to_remove {
+        if let Some(mut pane) = state.remove(&pane_id) {
+            flush_pending_keyword_hits(
+                &mut pane,
+                args,
+                client,
+                now,
+                Duration::from_secs(args.keyword_window_secs.max(1)),
+                force,
+            )
+            .await?;
+        }
+    }
     Ok(())
 }
 
@@ -225,30 +331,85 @@ async fn launch_session(args: &TmuxNewArgs) -> Result<()> {
     }
 
     if let Some(command) = build_command_to_send(args) {
-        send_command_to_session(&args.session, &command).await?;
+        if args.retry_enter {
+            send_keys_reliable(
+                &args.session,
+                &command,
+                args.retry_enter_count,
+                args.retry_enter_delay_ms,
+            )
+            .await?;
+        } else {
+            send_command_to_session(&args.session, &command).await?;
+        }
     }
 
     Ok(())
 }
 
 async fn send_command_to_session(session: &str, command: &str) -> Result<()> {
+    send_literal_keys(session, command).await?;
+    send_enter_key(session, "Enter").await
+}
+
+async fn send_keys_reliable(
+    session: &str,
+    text: &str,
+    retry_count: u32,
+    retry_delay_ms: u64,
+) -> Result<()> {
+    send_literal_keys(session, text).await?;
+    let mut baseline_hash = capture_target_hash(session).await?;
+
+    for delay in retry_enter_delays(retry_count, retry_delay_ms) {
+        send_enter_key(session, "Enter").await?;
+        sleep(delay).await;
+        let current_hash = capture_target_hash(session).await?;
+        if current_hash != baseline_hash {
+            return Ok(());
+        }
+
+        baseline_hash = current_hash;
+    }
+
+    Ok(())
+}
+
+fn retry_enter_delays(retry_count: u32, retry_delay_ms: u64) -> Vec<Duration> {
+    let base_delay = retry_delay_ms.max(1);
+    let mut next_delay_ms = base_delay;
+
+    (0..=retry_count)
+        .map(|_| {
+            let delay = Duration::from_millis(next_delay_ms);
+            next_delay_ms = next_delay_ms.saturating_mul(2);
+            delay
+        })
+        .collect()
+}
+
+async fn send_literal_keys(session: &str, text: &str) -> Result<()> {
     let literal_output = Command::new(tmux_bin())
         .arg("send-keys")
         .arg("-t")
         .arg(session)
         .arg("-l")
-        .arg(command)
+        .arg(text)
         .output()
         .await?;
     if !literal_output.status.success() {
         return Err(tmux_stderr(&literal_output.stderr).into());
     }
 
+    Ok(())
+}
+
+async fn send_enter_key(session: &str, key: &str) -> Result<()> {
     let enter_output = Command::new(tmux_bin())
         .arg("send-keys")
         .arg("-t")
         .arg(session)
-        .arg("Enter")
+        .arg(key)
         .output()
         .await?;
     if !enter_output.status.success() {
@@ -256,6 +417,23 @@ async fn send_command_to_session(session: &str, command: &str) -> Result<()> {
     }
 
     Ok(())
+}
+
+async fn capture_target_hash(target: &str) -> Result<u64> {
+    let capture = Command::new(tmux_bin())
+        .arg("capture-pane")
+        .arg("-p")
+        .arg("-t")
+        .arg(target)
+        .arg("-S")
+        .arg("-200")
+        .output()
+        .await?;
+    if !capture.status.success() {
+        return Err(tmux_stderr(&capture.stderr).into());
+    }
+
+    Ok(content_hash(&String::from_utf8(capture.stdout)?))
 }
 
 fn build_command_to_send(args: &TmuxNewArgs) -> Option<String> {
@@ -375,32 +553,6 @@ async fn snapshot_session(session: &str) -> Result<Vec<PaneSnapshot>> {
     Ok(panes)
 }
 
-fn collect_keyword_hits(previous: &str, current: &str, keywords: &[String]) -> Vec<KeywordHit> {
-    if keywords.is_empty() {
-        return Vec::new();
-    }
-    let previous_lines: HashSet<&str> = previous.lines().collect();
-    current
-        .lines()
-        .filter(|line| !previous_lines.contains(*line))
-        .flat_map(|line| {
-            keywords.iter().filter_map(move |keyword| {
-                if line
-                    .to_ascii_lowercase()
-                    .contains(&keyword.to_ascii_lowercase())
-                {
-                    Some(KeywordHit {
-                        keyword: keyword.clone(),
-                        line: line.to_string(),
-                    })
-                } else {
-                    None
-                }
-            })
-        })
-        .collect()
-}
-
 fn content_hash(content: &str) -> u64 {
     let mut hasher = DefaultHasher::new();
     content.hash(&mut hasher);
@@ -424,6 +576,7 @@ fn tmux_bin() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::keyword_window::KeywordHit;
 
     #[test]
     fn keyword_hits_only_emit_for_new_lines() {
@@ -453,6 +606,9 @@ PR created #7",
             stale_minutes: 10,
             format: None,
             attach: false,
+            retry_enter: true,
+            retry_enter_count: crate::cli::DEFAULT_RETRY_ENTER_COUNT,
+            retry_enter_delay_ms: crate::cli::DEFAULT_RETRY_ENTER_DELAY_MS,
             shell: None,
             command: vec![
                 "zsh".into(),
@@ -479,6 +635,9 @@ PR created #7",
             stale_minutes: 10,
             format: None,
             attach: false,
+            retry_enter: true,
+            retry_enter_count: crate::cli::DEFAULT_RETRY_ENTER_COUNT,
+            retry_enter_delay_ms: crate::cli::DEFAULT_RETRY_ENTER_DELAY_MS,
             shell: Some("/bin/zsh".into()),
             command: vec!["source ~/.zshrc && omx --madmax".into()],
         };
@@ -501,6 +660,9 @@ PR created #7",
             stale_minutes: 10,
             format: None,
             attach: false,
+            retry_enter: true,
+            retry_enter_count: crate::cli::DEFAULT_RETRY_ENTER_COUNT,
+            retry_enter_delay_ms: crate::cli::DEFAULT_RETRY_ENTER_DELAY_MS,
             shell: None,
             command: vec!["source ~/.zshrc && omx --madmax".into()],
         };
@@ -520,6 +682,7 @@ PR created #7",
             keywords: vec!["error".into(), "complete".into()],
             stale_minutes: 15,
             format: Some(TmuxWrapperFormat::Inline),
+            retry_enter: true,
         };
 
         let monitor_args = TmuxMonitorArgs::from(&args);
@@ -528,10 +691,157 @@ PR created #7",
         assert_eq!(monitor_args.channel.as_deref(), Some("alerts"));
         assert_eq!(monitor_args.mention.as_deref(), Some("<@123>"));
         assert_eq!(monitor_args.keywords, vec!["error", "complete"]);
+        assert_eq!(monitor_args.keyword_window_secs, 30);
         assert_eq!(monitor_args.stale_minutes, 15);
         assert!(matches!(
             monitor_args.format,
             Some(TmuxWrapperFormat::Inline)
         ));
     }
+
+    #[test]
+    fn tmux_keyword_event_inherits_channel_format_and_mention() {
+        let args = TmuxMonitorArgs {
+            session: "issue-24".into(),
+            channel: Some("alerts".into()),
+            mention: Some("<@123>".into()),
+            keywords: vec!["error".into()],
+            keyword_window_secs: 30,
+            stale_minutes: 15,
+            format: Some(TmuxWrapperFormat::Alert),
+        };
+
+        let event = tmux_keyword_event(
+            &args,
+            "issue-24".into(),
+            vec![("error".into(), "boom".into())],
+        );
+
+        assert_eq!(event.channel.as_deref(), Some("alerts"));
+        assert_eq!(event.mention.as_deref(), Some("<@123>"));
+        assert!(matches!(
+            event.format,
+            Some(crate::events::MessageFormat::Alert)
+        ));
+        assert_eq!(event.payload["session"], "issue-24");
+        assert_eq!(event.payload["keyword"], "error");
+        assert_eq!(event.payload["line"], "boom");
+    }
+
+    #[test]
+    fn tmux_stale_event_inherits_channel_format_and_mention() {
+        let args = TmuxMonitorArgs {
+            session: "issue-24".into(),
+            channel: Some("alerts".into()),
+            mention: Some("<@123>".into()),
+            keywords: vec!["error".into()],
+            keyword_window_secs: 30,
+            stale_minutes: 15,
+            format: Some(TmuxWrapperFormat::Inline),
+        };
+
+        let event = tmux_stale_event(&args, "issue-24".into(), "0.0".into(), "waiting".into());
+
+        assert_eq!(event.channel.as_deref(), Some("alerts"));
+        assert_eq!(event.mention.as_deref(), Some("<@123>"));
+        assert!(matches!(
+            event.format,
+            Some(crate::events::MessageFormat::Inline)
+        ));
+        assert_eq!(event.payload["session"], "issue-24");
+        assert_eq!(event.payload["pane"], "0.0");
+        assert_eq!(event.payload["minutes"], 15);
+        assert_eq!(event.payload["last_line"], "waiting");
+    }
+
+    #[test]
+    fn retry_enter_delays_respect_requested_backoff_limit() {
+        assert_eq!(retry_enter_delays(0, 250), vec![Duration::from_millis(250)]);
+        assert_eq!(
+            retry_enter_delays(2, 250),
+            vec![
+                Duration::from_millis(250),
+                Duration::from_millis(500),
+                Duration::from_millis(1_000)
+            ]
+        );
+        assert_eq!(
+            retry_enter_delays(4, 250),
+            vec![
+                Duration::from_millis(250),
+                Duration::from_millis(500),
+                Duration::from_millis(1_000),
+                Duration::from_millis(2_000),
+                Duration::from_millis(4_000)
+            ]
+        );
+    }
+
+    #[test]
+    fn retry_enter_delays_clamp_zero_delay_to_one_millisecond() {
+        assert_eq!(
+            retry_enter_delays(2, 0),
+            vec![
+                Duration::from_millis(1),
+                Duration::from_millis(2),
+                Duration::from_millis(4)
+            ]
+        );
+    }
+
+    #[test]
+    fn flush_pending_keyword_hits_clears_window_after_send_attempt() {
+        let args = TmuxMonitorArgs {
+            session: "issue-24".into(),
+            channel: Some("alerts".into()),
+            mention: None,
+            keywords: vec!["error".into(), "complete".into()],
+            keyword_window_secs: 30,
+            stale_minutes: 15,
+            format: Some(TmuxWrapperFormat::Compact),
+        };
+        let config = AppConfig::default();
+        let client = DaemonClient::from_config(&config);
+        let start = Instant::now();
+        let mut pane = PaneState {
+            session: "issue-24".into(),
+            pane_name: "0.0".into(),
+            content_hash: 0,
+            snapshot: String::new(),
+            last_change: start,
+            last_stale_notification: None,
+            pending_keyword_hits: Some({
+                let mut pending = PendingKeywordHits::new(start);
+                pending.push(vec![
+                    KeywordHit {
+                        keyword: "error".into(),
+                        line: "boom".into(),
+                    },
+                    KeywordHit {
+                        keyword: "error".into(),
+                        line: "boom".into(),
+                    },
+                ]);
+                pending
+            }),
+        };
+
+        let result = tokio::runtime::Runtime::new()
+            .unwrap()
+            .block_on(flush_pending_keyword_hits(
+                &mut pane,
+                &args,
+                &client,
+                start + Duration::from_secs(30),
+                Duration::from_secs(30),
+                false,
+            ));
+
+        assert!(result.is_err());
+        assert!(pane.pending_keyword_hits.is_none());
+    }
+}
+
+fn default_keyword_window_secs() -> u64 {
+    30
 }
