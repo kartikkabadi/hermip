@@ -9,7 +9,7 @@
   <a href="https://github.com/Yeachan-Heo/clawhip/stargazers"><img src="https://img.shields.io/github/stars/Yeachan-Heo/clawhip?style=social" alt="GitHub stars" /></a>
 </p>
 
-> **⭐ Optional support:** the interactive repo-local installer can offer to star this repo after a successful install when `gh` is installed and authenticated. Skip it with `--skip-star-prompt` or `CLAWHIP_SKIP_STAR_PROMPT=1`.
+> **⭐ Optional support:** the interactive repo-local install paths (`./install.sh` and `clawhip install` from a clone) can offer to star this repo after a successful install when `gh` is installed and authenticated. Skip it with `--skip-star-prompt` or `CLAWHIP_SKIP_STAR_PROMPT=1`.
 
 clawhip is a daemon-first Discord notification router with a typed event pipeline, extracted sources, and a clean renderer/sink split.
 
@@ -542,6 +542,7 @@ Behavior:
 - install binary from git clone
 - ensure config dir exists
 - optional systemd install
+- optional post-install GitHub star prompt on interactive local installs
 - update rebuilds/reinstalls and optionally restarts daemon
 - uninstall removes runtime artifacts
 
@@ -683,17 +684,20 @@ Release artifacts are generated for these Rust target triples: `x86_64-unknown-l
 
 `install.sh` now tries the latest prebuilt release first and falls back to `cargo install --path . --force` when a matching release asset is unavailable. If Cargo is needed for the fallback path but not installed, the script prints Rustup setup instructions. When `--systemd` is used, the installed binary is also copied to `/usr/local/bin/clawhip` so the bundled service unit can start it.
 
-In interactive terminals, the repo-local installer may also offer an optional post-install `gh repo star Yeachan-Heo/clawhip` prompt. It never runs automatically, is skipped when `gh` is missing or unauthenticated, and can be disabled with `./install.sh --skip-star-prompt` or `CLAWHIP_SKIP_STAR_PROMPT=1 ./install.sh`.
+In interactive terminals, both the repo-local installer and `clawhip install` may offer an optional post-install `gh repo star Yeachan-Heo/clawhip` prompt. It never runs automatically, is skipped when `gh` is missing or unauthenticated, and can be disabled with `./install.sh --skip-star-prompt`, `clawhip install --skip-star-prompt`, or `CLAWHIP_SKIP_STAR_PROMPT=1`.
 
 ### Runtime lifecycle commands
 
 ```bash
 clawhip install
 clawhip install --systemd
+clawhip install --skip-star-prompt
 clawhip update --restart
 clawhip uninstall
 clawhip uninstall --remove-systemd --remove-config
 ```
+
+`clawhip install` now matches the repo-local installer's optional GitHub star prompt behavior: it only appears in interactive terminals, is skipped when `gh` is missing or unauthenticated, never stars automatically, and can be disabled with `clawhip install --skip-star-prompt` or `CLAWHIP_SKIP_STAR_PROMPT=1 clawhip install`.
 
 ## systemd contract
 

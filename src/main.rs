@@ -163,7 +163,10 @@ async fn real_main() -> Result<()> {
             };
             send_incoming_event(&client, event).await
         }
-        Commands::Install { systemd } => lifecycle::install(systemd),
+        Commands::Install {
+            systemd,
+            skip_star_prompt,
+        } => lifecycle::install(systemd, skip_star_prompt),
         Commands::Update { restart } => lifecycle::update(restart),
         Commands::Uninstall {
             remove_systemd,

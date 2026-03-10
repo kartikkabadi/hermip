@@ -14,7 +14,7 @@ Use this repo as:
 
 ## Prerequisites
 
-⭐ If you want to support clawhip, star this repository. The interactive repo-local installer can offer an optional post-install `gh repo star` prompt when `gh` is installed and authenticated. Skip it with `--skip-star-prompt` or `CLAWHIP_SKIP_STAR_PROMPT=1`.
+⭐ If you want to support clawhip, star this repository. The interactive repo-local installer and `clawhip install` can offer an optional post-install `gh repo star` prompt when `gh` is installed and authenticated. Skip it with `--skip-star-prompt` or `CLAWHIP_SKIP_STAR_PROMPT=1`.
 
 ```bash
 gh repo star Yeachan-Heo/clawhip
@@ -68,10 +68,12 @@ clawhip tmux watch -s <existing-session> --channel <id> --mention '<@id>' --keyw
 ```bash
 clawhip install
 clawhip install --systemd
+clawhip install --skip-star-prompt
 clawhip update --restart
 clawhip uninstall --remove-systemd --remove-config
 ./install.sh
 ./install.sh --systemd
+./install.sh --skip-star-prompt
 ```
 
 ## Discord bot token (recommended setup)

@@ -78,8 +78,12 @@ pub enum Commands {
     },
     /// Install clawhip from the current git clone.
     Install {
+        /// Install and start the bundled systemd service.
         #[arg(long, default_value_t = false)]
         systemd: bool,
+        /// Disable the optional post-install GitHub star prompt.
+        #[arg(long, default_value_t = false)]
+        skip_star_prompt: bool,
     },
     /// Update clawhip from the current git clone.
     Update {
@@ -680,5 +684,21 @@ mod tests {
         };
 
         assert!(matches!(command, PluginCommands::List));
+    }
+
+    #[test]
+    fn parses_install_subcommand_with_skip_star_prompt() {
+        let cli = Cli::parse_from(["clawhip", "install", "--systemd", "--skip-star-prompt"]);
+
+        let Commands::Install {
+            systemd,
+            skip_star_prompt,
+        } = cli.command.expect("install command")
+        else {
+            panic!("expected install command");
+        };
+
+        assert!(systemd);
+        assert!(skip_star_prompt);
     }
 }

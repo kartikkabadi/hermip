@@ -1,11 +1,17 @@
 use std::env;
 use std::fs;
+use std::io::{self, BufRead, IsTerminal, Write};
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, Stdio};
+
+use anyhow::{Context, anyhow};
 
 use crate::{Result, plugins};
 
-pub fn install(systemd: bool) -> Result<()> {
+const GITHUB_REPO: &str = "Yeachan-Heo/clawhip";
+const SKIP_STAR_PROMPT_ENV: &str = "CLAWHIP_SKIP_STAR_PROMPT";
+
+pub fn install(systemd: bool, skip_star_prompt: bool) -> Result<()> {
     let repo_root = current_repo_root()?;
     run(Command::new("cargo")
         .arg("install")
@@ -16,6 +22,7 @@ pub fn install(systemd: bool) -> Result<()> {
     if systemd {
         install_systemd(&repo_root)?;
     }
+    maybe_prompt_to_star_repo(skip_star_prompt)?;
     println!("clawhip install complete");
     Ok(())
 }
@@ -67,7 +74,7 @@ fn current_repo_root() -> Result<PathBuf> {
     if dir.join("Cargo.toml").exists() && dir.join("src").exists() {
         Ok(dir)
     } else {
-        Err("run this command from the clawhip git clone root".into())
+        Err(anyhow!("run this command from the clawhip git clone root").into())
     }
 }
 
@@ -89,6 +96,100 @@ fn cargo_bin_dir() -> PathBuf {
             PathBuf::from(env::var("HOME").unwrap_or_else(|_| ".".into())).join(".cargo")
         })
         .join("bin")
+}
+
+fn maybe_prompt_to_star_repo(skip_star_prompt: bool) -> Result<()> {
+    let interactive = io::stdin().is_terminal() && io::stdout().is_terminal();
+    let stdin = io::stdin();
+    let stdout = io::stdout();
+    let mut input = stdin.lock();
+    let mut output = stdout.lock();
+    let env_skip_star_prompt = env::var(SKIP_STAR_PROMPT_ENV).ok();
+
+    maybe_prompt_to_star_repo_with(
+        skip_star_prompt,
+        env_skip_star_prompt.as_deref(),
+        interactive,
+        &mut input,
+        &mut output,
+        gh_command_succeeds,
+    )
+}
+
+fn maybe_prompt_to_star_repo_with<R, W, F>(
+    skip_star_prompt: bool,
+    env_skip_star_prompt: Option<&str>,
+    interactive: bool,
+    input: &mut R,
+    output: &mut W,
+    mut gh_command_succeeds: F,
+) -> Result<()>
+where
+    R: BufRead,
+    W: Write,
+    F: FnMut(&[&str]) -> bool,
+{
+    if star_prompt_disabled(skip_star_prompt, env_skip_star_prompt) {
+        writeln!(
+            output,
+            "[clawhip] skipping GitHub star prompt (--skip-star-prompt or {SKIP_STAR_PROMPT_ENV})"
+        )?;
+        return Ok(());
+    }
+
+    if !interactive || !gh_command_succeeds(&["auth", "status"]) {
+        return Ok(());
+    }
+
+    writeln!(
+        output,
+        "[clawhip] optional: star {GITHUB_REPO} on GitHub to support the project"
+    )?;
+    write!(
+        output,
+        "[clawhip] Would you like to star {GITHUB_REPO} on GitHub with gh? [y/N]: "
+    )?;
+    output.flush()?;
+
+    let mut response = String::new();
+    if input.read_line(&mut response)? == 0 {
+        return Ok(());
+    }
+
+    match response.trim() {
+        "y" | "Y" | "yes" | "Yes" | "YES" => {
+            if gh_command_succeeds(&["repo", "star", GITHUB_REPO]) {
+                writeln!(output, "[clawhip] thanks for starring {GITHUB_REPO}")?;
+            } else {
+                writeln!(
+                    output,
+                    "[clawhip] unable to star {GITHUB_REPO} with gh; continuing without it"
+                )?;
+            }
+        }
+        _ => {
+            writeln!(output, "[clawhip] skipping GitHub star step")?;
+        }
+    }
+
+    Ok(())
+}
+
+fn star_prompt_disabled(skip_star_prompt: bool, env_skip_star_prompt: Option<&str>) -> bool {
+    skip_star_prompt || env_skip_star_prompt.is_some_and(is_truthy)
+}
+
+fn is_truthy(value: &str) -> bool {
+    matches!(value, "1" | "true" | "TRUE" | "yes" | "YES" | "on" | "ON")
+}
+
+fn gh_command_succeeds(args: &[&str]) -> bool {
+    Command::new("gh")
+        .args(args)
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .is_ok_and(|status| status.success())
 }
 
 fn install_systemd(repo_root: &Path) -> Result<()> {
@@ -144,10 +245,126 @@ fn stop_systemd_if_present() -> Result<()> {
 }
 
 fn run(command: &mut Command) -> Result<()> {
-    let status = command.status()?;
+    let status = command
+        .status()
+        .with_context(|| format!("failed to run command: {command:?}"))?;
     if status.success() {
         Ok(())
     } else {
-        Err(format!("command failed with status {status}").into())
+        Err(anyhow!("command failed with status {status}: {command:?}").into())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Cursor;
+
+    #[test]
+    fn skip_flag_or_env_disables_star_prompt() {
+        let mut output = Vec::new();
+        let mut input = Cursor::new(Vec::<u8>::new());
+        let mut gh_calls = Vec::<Vec<String>>::new();
+
+        maybe_prompt_to_star_repo_with(true, Some("1"), true, &mut input, &mut output, |args| {
+            gh_calls.push(args.iter().map(|arg| (*arg).to_string()).collect());
+            true
+        })
+        .expect("skip should succeed");
+
+        assert!(gh_calls.is_empty());
+        let stdout = String::from_utf8(output).expect("utf8 output");
+        assert!(stdout.contains("skipping GitHub star prompt"));
+    }
+
+    #[test]
+    fn skips_star_prompt_when_not_interactive() {
+        let mut output = Vec::new();
+        let mut input = Cursor::new(Vec::<u8>::new());
+        let mut gh_calls = Vec::<Vec<String>>::new();
+
+        maybe_prompt_to_star_repo_with(false, None, false, &mut input, &mut output, |args| {
+            gh_calls.push(args.iter().map(|arg| (*arg).to_string()).collect());
+            true
+        })
+        .expect("non-interactive install should succeed");
+
+        assert!(gh_calls.is_empty());
+        assert!(output.is_empty());
+    }
+
+    #[test]
+    fn skips_prompt_when_gh_is_unauthenticated() {
+        let mut output = Vec::new();
+        let mut input = Cursor::new(Vec::<u8>::new());
+        let mut gh_calls = Vec::<Vec<String>>::new();
+
+        maybe_prompt_to_star_repo_with(false, None, true, &mut input, &mut output, |args| {
+            gh_calls.push(args.iter().map(|arg| (*arg).to_string()).collect());
+            !matches!(args, ["auth", "status"])
+        })
+        .expect("unauthenticated gh should skip cleanly");
+
+        assert_eq!(
+            gh_calls,
+            vec![vec![String::from("auth"), String::from("status")]]
+        );
+        let stdout = String::from_utf8(output).expect("utf8 output");
+        assert!(!stdout.contains("Would you like to star"));
+    }
+
+    #[test]
+    fn stars_repo_only_after_explicit_yes() {
+        let mut output = Vec::new();
+        let mut input = Cursor::new(b"y\n".to_vec());
+        let mut gh_calls = Vec::<Vec<String>>::new();
+
+        maybe_prompt_to_star_repo_with(false, None, true, &mut input, &mut output, |args| {
+            gh_calls.push(args.iter().map(|arg| (*arg).to_string()).collect());
+            true
+        })
+        .expect("yes path should succeed");
+
+        assert_eq!(
+            gh_calls,
+            vec![
+                vec![String::from("auth"), String::from("status")],
+                vec![
+                    String::from("repo"),
+                    String::from("star"),
+                    String::from(GITHUB_REPO),
+                ],
+            ]
+        );
+        let stdout = String::from_utf8(output).expect("utf8 output");
+        assert!(stdout.contains("Would you like to star"));
+        assert!(stdout.contains("thanks for starring"));
+    }
+
+    #[test]
+    fn star_failure_does_not_fail_the_install() {
+        let mut output = Vec::new();
+        let mut input = Cursor::new(b"yes\n".to_vec());
+        let mut gh_calls = Vec::<Vec<String>>::new();
+
+        maybe_prompt_to_star_repo_with(false, None, true, &mut input, &mut output, |args| {
+            gh_calls.push(args.iter().map(|arg| (*arg).to_string()).collect());
+            !matches!(args, ["repo", "star", GITHUB_REPO])
+        })
+        .expect("star failure should not fail install");
+
+        assert_eq!(
+            gh_calls,
+            vec![
+                vec![String::from("auth"), String::from("status")],
+                vec![
+                    String::from("repo"),
+                    String::from("star"),
+                    String::from(GITHUB_REPO),
+                ],
+            ]
+        );
+        let stdout = String::from_utf8(output).expect("utf8 output");
+        assert!(stdout.contains("continuing without it"));
     }
 }
