@@ -69,6 +69,8 @@ When upstream provides it, clawhip normalizes these fields onto the top-level pa
 
 - `tool` is normalized to `omc` or `omx` when clawhip can infer it.
 - `status` is backfilled for legacy `agent.*` emits so generic `clawhip emit agent.finished --agent omx ...` remains valid.
+- OMC `context.projectName` backfills both compatibility `project` and canonical `repo_name`.
+- OMC `context.projectPath` backfills `repo_path` and `worktree_path` when no more specific path fields are present.
 - `issue_number` may be inferred from session/worktree/branch names like `issue-65` when upstream did not send it explicitly.
 - `pr_number` may be inferred from `pr_url`.
 - `raw_event` is retained only when clawhip had to rename the incoming event.
