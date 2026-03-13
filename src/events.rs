@@ -679,10 +679,25 @@ fn normalize_native_metadata(payload: &mut Value, raw_kind: &str, canonical_kind
             "/context/session_name",
         ],
     );
-    let project = first_string(payload, &["/project", "/projectName", "/project_name"]);
+    let project = first_string(
+        payload,
+        &[
+            "/project",
+            "/projectName",
+            "/project_name",
+            "/context/project",
+            "/context/projectName",
+            "/context/project_name",
+        ],
+    );
     let repo_name = first_string(
         payload,
-        &["/repo_name", "/context/repo_name", "/projectName"],
+        &[
+            "/repo_name",
+            "/context/repo_name",
+            "/projectName",
+            "/context/projectName",
+        ],
     )
     .or_else(|| {
         first_string(payload, &["/repo_path", "/context/repo_path"]).and_then(|path| {
@@ -694,11 +709,21 @@ fn normalize_native_metadata(payload: &mut Value, raw_kind: &str, canonical_kind
     });
     let repo_path = first_string(
         payload,
-        &["/repo_path", "/context/repo_path", "/projectPath"],
+        &[
+            "/repo_path",
+            "/context/repo_path",
+            "/projectPath",
+            "/context/projectPath",
+        ],
     );
     let worktree_path = first_string(
         payload,
-        &["/worktree_path", "/context/worktree_path", "/projectPath"],
+        &[
+            "/worktree_path",
+            "/context/worktree_path",
+            "/projectPath",
+            "/context/projectPath",
+        ],
     );
     let branch = first_string(payload, &["/branch", "/context/branch"]);
     let command = first_string(
@@ -763,7 +788,13 @@ fn normalize_native_metadata(payload: &mut Value, raw_kind: &str, canonical_kind
             .find_map(extract_issue_number)
         });
     let mut pr_number = first_u64(payload, &["/pr_number", "/context/pr_number"]);
-    let pr_url = first_string(payload, &["/pr_url", "/context/pr_url", "/signal/prUrl"]);
+    let pr_url =
+        first_string(payload, &["/pr_url", "/context/pr_url", "/signal/prUrl"]).or_else(|| {
+            summary
+                .as_ref()
+                .filter(|value| extract_pr_number_from_url(value).is_some())
+                .cloned()
+        });
     if pr_number.is_none() {
         pr_number = pr_url.as_deref().and_then(extract_pr_number_from_url);
     }
@@ -1331,6 +1362,119 @@ mod tests {
         assert_eq!(
             event.payload["event_timestamp"],
             json!("2026-03-09T18:07:07.000Z")
+        );
+    }
+
+    #[test]
+    fn normalize_event_maps_omc_signal_route_key_into_session_event() {
+        let event = normalize_event(IncomingEvent {
+            kind: "post-tool-use".into(),
+            channel: None,
+            mention: None,
+            format: None,
+            template: None,
+            payload: json!({
+                "timestamp": "2026-03-09T18:01:58.000Z",
+                "signal": {
+                    "routeKey": "pull-request.created",
+                    "phase": "finished",
+                    "summary": "https://github.com/Yeachan-Heo/clawhip/pull/67"
+                },
+                "context": {
+                    "sessionId": "issue-65",
+                    "projectPath": "/repo/clawhip-worktrees/issue-65",
+                    "projectName": "clawhip"
+                }
+            }),
+        });
+
+        assert_eq!(event.kind, "session.pr-created");
+        assert_eq!(event.payload["tool"], json!("omc"));
+        assert_eq!(event.payload["session_id"], json!("issue-65"));
+        assert_eq!(event.payload["project"], json!("clawhip"));
+        assert_eq!(event.payload["repo_name"], json!("clawhip"));
+        assert_eq!(
+            event.payload["repo_path"],
+            json!("/repo/clawhip-worktrees/issue-65")
+        );
+        assert_eq!(
+            event.payload["worktree_path"],
+            json!("/repo/clawhip-worktrees/issue-65")
+        );
+        assert_eq!(event.payload["pr_number"], json!(67));
+        assert_eq!(
+            event.payload["pr_url"],
+            json!("https://github.com/Yeachan-Heo/clawhip/pull/67")
+        );
+        assert_eq!(event.payload["status"], json!("finished"));
+    }
+
+    #[test]
+    fn normalize_event_maps_omc_native_contract_into_session_event() {
+        let event = normalize_event(IncomingEvent {
+            kind: "post-tool-use".into(),
+            channel: None,
+            mention: None,
+            format: None,
+            template: None,
+            payload: json!({
+                "timestamp": "2026-03-09T18:01:58.000Z",
+                "signal": {
+                    "routeKey": "pull-request.created",
+                    "toolName": "Bash",
+                    "command": "gh pr create",
+                    "summary": "https://github.com/Yeachan-Heo/clawhip/pull/71"
+                },
+                "context": {
+                    "sessionId": "issue-65",
+                    "projectPath": "/repo/clawhip",
+                    "projectName": "clawhip"
+                }
+            }),
+        });
+
+        assert_eq!(event.kind, "session.pr-created");
+        assert_eq!(event.payload["tool"], json!("omc"));
+        assert_eq!(event.payload["session_id"], json!("issue-65"));
+        assert_eq!(event.payload["project"], json!("clawhip"));
+        assert_eq!(event.payload["repo_name"], json!("clawhip"));
+        assert_eq!(event.payload["repo_path"], json!("/repo/clawhip"));
+        assert_eq!(event.payload["worktree_path"], json!("/repo/clawhip"));
+        assert_eq!(event.payload["tool_name"], json!("Bash"));
+        assert_eq!(event.payload["command"], json!("gh pr create"));
+        assert_eq!(
+            event.payload["summary"],
+            json!("https://github.com/Yeachan-Heo/clawhip/pull/71")
+        );
+        assert_eq!(event.payload["pr_number"], json!(71));
+    }
+
+    #[test]
+    fn renders_omc_pr_created_event_using_contract_label() {
+        let event = normalize_event(IncomingEvent {
+            kind: "post-tool-use".into(),
+            channel: None,
+            mention: None,
+            format: None,
+            template: None,
+            payload: json!({
+                "timestamp": "2026-03-09T18:01:58.000Z",
+                "signal": {
+                    "routeKey": "pull-request.created",
+                    "phase": "finished",
+                    "summary": "https://github.com/Yeachan-Heo/clawhip/pull/67"
+                },
+                "context": {
+                    "sessionId": "issue-65",
+                    "projectPath": "/repo/clawhip-worktrees/issue-65",
+                    "projectName": "clawhip"
+                }
+            }),
+        });
+
+        assert_eq!(
+            event.render_default(&MessageFormat::Compact).unwrap(),
+            "omc issue-65 pr-created (repo=clawhip, issue=#65, pr=#67, summary=https://github.com/Yeachan-Heo/clawhip/pull/67)"
         );
     }
 

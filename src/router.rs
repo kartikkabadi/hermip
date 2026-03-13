@@ -863,6 +863,108 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn legacy_agent_events_match_session_routes() {
+        let config = AppConfig {
+            defaults: DefaultsConfig {
+                channel: Some("default".into()),
+                format: MessageFormat::Compact,
+            },
+            routes: vec![RouteRule {
+                event: "session.*".into(),
+                sink: "discord".into(),
+                filter: [
+                    ("tool".to_string(), "omx".to_string()),
+                    ("project".to_string(), "clawhip".to_string()),
+                ]
+                .into_iter()
+                .collect(),
+                channel: Some("session-route".into()),
+                webhook: None,
+                slack_webhook: None,
+                mention: None,
+                allow_dynamic_tokens: false,
+                format: Some(MessageFormat::Compact),
+                template: None,
+            }],
+            ..AppConfig::default()
+        };
+        let router = Router::new(Arc::new(config));
+        let event = normalize_event(IncomingEvent::agent_finished(
+            "omx".into(),
+            Some("issue-65".into()),
+            Some("clawhip".into()),
+            Some(42),
+            Some("PR created".into()),
+            None,
+            None,
+        ));
+
+        let (channel, format, content) = router.preview(&event).await.unwrap();
+
+        assert_eq!(channel, "session-route");
+        assert_eq!(format, MessageFormat::Compact);
+        assert!(content.contains("agent omx"));
+        assert!(content.contains("finished"));
+    }
+
+    #[tokio::test]
+    async fn native_omc_session_events_match_session_routes() {
+        let config = AppConfig {
+            defaults: DefaultsConfig {
+                channel: Some("default".into()),
+                format: MessageFormat::Compact,
+            },
+            routes: vec![RouteRule {
+                event: "session.*".into(),
+                sink: "discord".into(),
+                filter: [
+                    ("tool".to_string(), "omc".to_string()),
+                    ("repo_name".to_string(), "clawhip".to_string()),
+                ]
+                .into_iter()
+                .collect(),
+                channel: Some("session-route".into()),
+                webhook: None,
+                slack_webhook: None,
+                mention: None,
+                allow_dynamic_tokens: false,
+                format: Some(MessageFormat::Compact),
+                template: None,
+            }],
+            ..AppConfig::default()
+        };
+        let router = Router::new(Arc::new(config));
+        let event = normalize_event(IncomingEvent {
+            kind: "post-tool-use".into(),
+            channel: None,
+            mention: None,
+            format: None,
+            template: None,
+            payload: json!({
+                "timestamp": "2026-03-09T18:01:58.000Z",
+                "signal": {
+                    "routeKey": "pull-request.created",
+                    "phase": "finished",
+                    "summary": "https://github.com/Yeachan-Heo/clawhip/pull/67"
+                },
+                "context": {
+                    "sessionId": "issue-65",
+                    "projectPath": "/repo/clawhip-worktrees/issue-65",
+                    "projectName": "clawhip"
+                }
+            }),
+        });
+
+        let (channel, format, content) = router.preview(&event).await.unwrap();
+
+        assert_eq!(channel, "session-route");
+        assert_eq!(format, MessageFormat::Compact);
+        assert!(content.contains("omc issue-65 pr-created"));
+        assert!(content.contains("repo=clawhip"));
+        assert!(content.contains("pr=#67"));
+    }
+
+    #[tokio::test]
     async fn session_lifecycle_events_match_existing_agent_routes() {
         let config = AppConfig {
             defaults: DefaultsConfig {

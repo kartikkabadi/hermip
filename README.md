@@ -458,9 +458,12 @@ Normalized metadata (when upstream provides it):
 - `command`
 - `tool_name`
 - `test_runner`
+- `status`
 - `summary`
 - `error_message`
 - `event_timestamp`
+- `raw_event`
+- `contract_event`
 
 Route guidance:
 - prefer `session.*` for new native OMC/OMX routes
