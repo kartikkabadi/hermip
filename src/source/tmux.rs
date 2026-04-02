@@ -4,6 +4,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
+use time::{OffsetDateTime, format_description::well_known::Rfc3339};
 use tokio::process::Command;
 use tokio::sync::{RwLock, mpsc};
 use tokio::time::sleep;
@@ -18,6 +19,31 @@ use crate::source::Source;
 
 pub type SharedTmuxRegistry = Arc<RwLock<HashMap<String, RegisteredTmuxSession>>>;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "kebab-case")]
+pub enum RegistrationSource {
+    CliWatch,
+    CliNew,
+    #[default]
+    ConfigMonitor,
+}
+
+impl RegistrationSource {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::CliWatch => "cli-watch",
+            Self::CliNew => "cli-new",
+            Self::ConfigMonitor => "config-monitor",
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ParentProcessInfo {
+    pub pid: u32,
+    pub name: Option<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RegisteredTmuxSession {
     pub session: String,
@@ -29,6 +55,12 @@ pub struct RegisteredTmuxSession {
     pub keyword_window_secs: u64,
     pub stale_minutes: u64,
     pub format: Option<MessageFormat>,
+    #[serde(default = "current_timestamp_rfc3339")]
+    pub registered_at: String,
+    #[serde(default)]
+    pub registration_source: RegistrationSource,
+    #[serde(default)]
+    pub parent_process: Option<ParentProcessInfo>,
     #[serde(default)]
     pub active_wrapper_monitor: bool,
 }
@@ -43,6 +75,9 @@ impl From<&TmuxSessionMonitor> for RegisteredTmuxSession {
             keyword_window_secs: value.keyword_window_secs,
             stale_minutes: value.stale_minutes,
             format: value.format.clone(),
+            registered_at: current_timestamp_rfc3339(),
+            registration_source: RegistrationSource::ConfigMonitor,
+            parent_process: None,
             active_wrapper_monitor: false,
         }
     }
@@ -216,6 +251,23 @@ pub async fn monitor_registered_session(
     Ok(())
 }
 
+pub async fn list_active_tmux_registrations(
+    config: &AppConfig,
+    registry: &SharedTmuxRegistry,
+) -> Result<Vec<RegisteredTmuxSession>> {
+    match list_tmux_sessions().await {
+        Ok(available_sessions) => {
+            sync_active_config_registrations(config, registry, &available_sessions).await;
+        }
+        Err(error) => {
+            eprintln!("clawhip source tmux list-sessions failed: {error}");
+        }
+    }
+
+    let snapshot = registry.read().await;
+    Ok(sorted_registry_snapshot(&snapshot))
+}
+
 async fn poll_tmux(
     config: &AppConfig,
     registry: &SharedTmuxRegistry,
@@ -229,6 +281,9 @@ async fn poll_tmux(
             None
         }
     };
+    if let Some(available_sessions) = available_sessions.as_ref() {
+        sync_active_config_registrations(config, registry, available_sessions).await;
+    }
     let mut sessions = resolve_monitored_sessions(
         config
             .monitors
@@ -372,6 +427,76 @@ async fn poll_tmux(
         .retain(|session, _| sessions.contains_key(session));
 
     Ok(())
+}
+
+async fn sync_active_config_registrations(
+    config: &AppConfig,
+    registry: &SharedTmuxRegistry,
+    available_sessions: &HashSet<String>,
+) {
+    let existing_registry = registry.read().await.clone();
+    let resolved = resolve_monitored_sessions(
+        config
+            .monitors
+            .tmux
+            .sessions
+            .iter()
+            .map(RegisteredTmuxSession::from)
+            .collect(),
+        Some(available_sessions),
+    );
+    let active_config = resolved
+        .into_iter()
+        .filter(|(session, _)| available_sessions.contains(session))
+        .map(|(session, mut registration)| {
+            if let Some(existing) = existing_registry.get(&session).filter(|existing| {
+                !existing.active_wrapper_monitor
+                    && existing.registration_source == RegistrationSource::ConfigMonitor
+            }) {
+                registration.registered_at = existing.registered_at.clone();
+                registration.parent_process = existing.parent_process.clone();
+            }
+            (session, registration)
+        })
+        .collect();
+
+    let mut write = registry.write().await;
+    merge_active_config_registrations(&mut write, active_config);
+}
+
+fn merge_active_config_registrations(
+    registry: &mut HashMap<String, RegisteredTmuxSession>,
+    active_config: BTreeMap<String, RegisteredTmuxSession>,
+) {
+    let active_sessions: HashSet<String> = active_config.keys().cloned().collect();
+    registry.retain(|session, registration| {
+        registration.active_wrapper_monitor
+            || registration.registration_source != RegistrationSource::ConfigMonitor
+            || active_sessions.contains(session)
+    });
+
+    for (session, mut registration) in active_config {
+        if let Some(existing) = registry.get(&session) {
+            if existing.active_wrapper_monitor {
+                continue;
+            }
+            if existing.registration_source == RegistrationSource::ConfigMonitor {
+                registration.registered_at = existing.registered_at.clone();
+                registration.parent_process = existing.parent_process.clone();
+            }
+        }
+        registry.insert(session, registration);
+    }
+}
+
+fn sorted_registry_snapshot(
+    registry: &HashMap<String, RegisteredTmuxSession>,
+) -> Vec<RegisteredTmuxSession> {
+    let mut sessions: BTreeMap<String, RegisteredTmuxSession> = BTreeMap::new();
+    for (session, registration) in registry {
+        sessions.insert(session.clone(), registration.clone());
+    }
+    sessions.into_values().collect()
 }
 
 fn resolve_monitored_sessions(
@@ -703,6 +828,12 @@ fn default_keyword_window_secs() -> u64 {
     30
 }
 
+pub fn current_timestamp_rfc3339() -> String {
+    OffsetDateTime::now_utc()
+        .format(&Rfc3339)
+        .unwrap_or_else(|_| "1970-01-01T00:00:00Z".to_string())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -718,6 +849,9 @@ mod tests {
             keyword_window_secs: 30,
             stale_minutes: 15,
             format: Some(MessageFormat::Compact),
+            registered_at: "2026-04-02T00:00:00Z".into(),
+            registration_source: RegistrationSource::ConfigMonitor,
+            parent_process: None,
             active_wrapper_monitor: false,
         }
     }
@@ -801,6 +935,133 @@ PR created #7",
         assert_eq!(event.payload["pane"], "0.0");
         assert_eq!(event.payload["minutes"], 15);
         assert_eq!(event.payload["last_line"], "waiting");
+    }
+
+    #[test]
+    fn config_monitor_registration_sets_audit_defaults() {
+        let monitor = TmuxSessionMonitor {
+            session: "issue-*".into(),
+            channel: Some("alerts".into()),
+            mention: None,
+            keywords: vec!["panic".into()],
+            keyword_window_secs: 30,
+            stale_minutes: 10,
+            format: None,
+        };
+
+        let registration = RegisteredTmuxSession::from(&monitor);
+
+        assert!(matches!(
+            registration.registration_source,
+            RegistrationSource::ConfigMonitor
+        ));
+        assert!(!registration.registered_at.is_empty());
+        assert!(registration.parent_process.is_none());
+    }
+
+    #[test]
+    fn merge_active_config_registrations_preserves_existing_timestamps_and_prunes_inactive_ones() {
+        let mut registry = HashMap::from([
+            (
+                "issue-105".into(),
+                RegisteredTmuxSession {
+                    session: "issue-105".into(),
+                    channel: Some("alerts".into()),
+                    mention: None,
+                    keywords: vec!["error".into()],
+                    keyword_window_secs: 30,
+                    stale_minutes: 10,
+                    format: None,
+                    registered_at: "2026-04-02T00:00:00Z".into(),
+                    registration_source: RegistrationSource::ConfigMonitor,
+                    parent_process: None,
+                    active_wrapper_monitor: false,
+                },
+            ),
+            (
+                "wrapper".into(),
+                RegisteredTmuxSession {
+                    session: "wrapper".into(),
+                    channel: Some("alerts".into()),
+                    mention: None,
+                    keywords: vec!["panic".into()],
+                    keyword_window_secs: 30,
+                    stale_minutes: 10,
+                    format: None,
+                    registered_at: "2026-04-02T01:00:00Z".into(),
+                    registration_source: RegistrationSource::CliWatch,
+                    parent_process: Some(ParentProcessInfo {
+                        pid: 42,
+                        name: Some("codex".into()),
+                    }),
+                    active_wrapper_monitor: true,
+                },
+            ),
+            (
+                "stale-config".into(),
+                RegisteredTmuxSession {
+                    session: "stale-config".into(),
+                    channel: Some("alerts".into()),
+                    mention: None,
+                    keywords: vec!["panic".into()],
+                    keyword_window_secs: 30,
+                    stale_minutes: 10,
+                    format: None,
+                    registered_at: "2026-04-02T02:00:00Z".into(),
+                    registration_source: RegistrationSource::ConfigMonitor,
+                    parent_process: None,
+                    active_wrapper_monitor: false,
+                },
+            ),
+        ]);
+
+        merge_active_config_registrations(
+            &mut registry,
+            BTreeMap::from([(
+                "issue-105".into(),
+                RegisteredTmuxSession {
+                    session: "issue-105".into(),
+                    channel: Some("alerts".into()),
+                    mention: None,
+                    keywords: vec!["error".into(), "complete".into()],
+                    keyword_window_secs: 30,
+                    stale_minutes: 10,
+                    format: None,
+                    registered_at: "2026-04-02T09:00:00Z".into(),
+                    registration_source: RegistrationSource::ConfigMonitor,
+                    parent_process: None,
+                    active_wrapper_monitor: false,
+                },
+            )]),
+        );
+
+        assert_eq!(registry.len(), 2);
+        assert_eq!(registry["issue-105"].registered_at, "2026-04-02T00:00:00Z");
+        assert_eq!(registry["issue-105"].keywords, vec!["error", "complete"]);
+        assert!(registry.contains_key("wrapper"));
+        assert!(!registry.contains_key("stale-config"));
+    }
+
+    #[test]
+    fn registered_tmux_session_deserializes_without_new_audit_fields() {
+        let registration: RegisteredTmuxSession = serde_json::from_value(serde_json::json!({
+            "session": "issue-24",
+            "channel": "alerts",
+            "mention": "<@123>",
+            "keywords": ["panic"],
+            "keyword_window_secs": 30,
+            "stale_minutes": 10,
+            "format": "compact",
+            "active_wrapper_monitor": false
+        }))
+        .unwrap();
+
+        assert!(matches!(
+            registration.registration_source,
+            RegistrationSource::ConfigMonitor
+        ));
+        assert!(registration.parent_process.is_none());
+        assert!(!registration.registered_at.is_empty());
     }
 
     #[tokio::test]
@@ -1070,6 +1331,9 @@ error: failed";
                 keyword_window_secs: 30,
                 stale_minutes: 10,
                 format: None,
+                registered_at: "2026-04-02T00:00:00Z".into(),
+                registration_source: RegistrationSource::ConfigMonitor,
+                parent_process: None,
                 active_wrapper_monitor: false,
             }],
             Some(&available_sessions),
@@ -1096,6 +1360,9 @@ error: failed";
                     keyword_window_secs: 30,
                     stale_minutes: 10,
                     format: None,
+                    registered_at: "2026-04-02T00:00:00Z".into(),
+                    registration_source: RegistrationSource::ConfigMonitor,
+                    parent_process: None,
                     active_wrapper_monitor: false,
                 },
                 RegisteredTmuxSession {
@@ -1106,6 +1373,9 @@ error: failed";
                     keyword_window_secs: 30,
                     stale_minutes: 10,
                     format: None,
+                    registered_at: "2026-04-02T00:00:00Z".into(),
+                    registration_source: RegistrationSource::ConfigMonitor,
+                    parent_process: None,
                     active_wrapper_monitor: false,
                 },
             ],
@@ -1130,6 +1400,9 @@ error: failed";
                     keyword_window_secs: 30,
                     stale_minutes: 10,
                     format: None,
+                    registered_at: "2026-04-02T00:00:00Z".into(),
+                    registration_source: RegistrationSource::ConfigMonitor,
+                    parent_process: None,
                     active_wrapper_monitor: false,
                 },
                 RegisteredTmuxSession {
@@ -1140,6 +1413,9 @@ error: failed";
                     keyword_window_secs: 30,
                     stale_minutes: 10,
                     format: None,
+                    registered_at: "2026-04-02T00:00:00Z".into(),
+                    registration_source: RegistrationSource::ConfigMonitor,
+                    parent_process: None,
                     active_wrapper_monitor: false,
                 },
             ],
@@ -1163,6 +1439,9 @@ error: failed";
                     keyword_window_secs: 30,
                     stale_minutes: 10,
                     format: None,
+                    registered_at: "2026-04-02T00:00:00Z".into(),
+                    registration_source: RegistrationSource::ConfigMonitor,
+                    parent_process: None,
                     active_wrapper_monitor: false,
                 },
                 RegisteredTmuxSession {
@@ -1173,6 +1452,9 @@ error: failed";
                     keyword_window_secs: 30,
                     stale_minutes: 10,
                     format: None,
+                    registered_at: "2026-04-02T00:00:00Z".into(),
+                    registration_source: RegistrationSource::ConfigMonitor,
+                    parent_process: None,
                     active_wrapper_monitor: false,
                 },
             ],
@@ -1196,6 +1478,9 @@ error: failed";
                     keyword_window_secs: 30,
                     stale_minutes: 10,
                     format: None,
+                    registered_at: "2026-04-02T00:00:00Z".into(),
+                    registration_source: RegistrationSource::ConfigMonitor,
+                    parent_process: None,
                     active_wrapper_monitor: false,
                 },
                 RegisteredTmuxSession {
@@ -1206,6 +1491,9 @@ error: failed";
                     keyword_window_secs: 30,
                     stale_minutes: 10,
                     format: None,
+                    registered_at: "2026-04-02T00:00:00Z".into(),
+                    registration_source: RegistrationSource::ConfigMonitor,
+                    parent_process: None,
                     active_wrapper_monitor: false,
                 },
             ],
@@ -1234,6 +1522,9 @@ error: failed";
                     keyword_window_secs: 30,
                     stale_minutes: 10,
                     format: None,
+                    registered_at: "2026-04-02T00:00:00Z".into(),
+                    registration_source: RegistrationSource::ConfigMonitor,
+                    parent_process: None,
                     active_wrapper_monitor: false,
                 },
                 RegisteredTmuxSession {
@@ -1244,6 +1535,9 @@ error: failed";
                     keyword_window_secs: 30,
                     stale_minutes: 10,
                     format: None,
+                    registered_at: "2026-04-02T00:00:00Z".into(),
+                    registration_source: RegistrationSource::ConfigMonitor,
+                    parent_process: None,
                     active_wrapper_monitor: false,
                 },
             ],
