@@ -9,9 +9,12 @@ mod dispatch;
 mod dynamic_tokens;
 mod event;
 mod events;
+mod hooks;
 mod keyword_window;
 mod lifecycle;
 mod memory;
+mod omc;
+mod omx;
 mod plugins;
 mod render;
 mod router;
@@ -26,7 +29,7 @@ use clap::Parser;
 
 use crate::cli::{
     AgentCommands, Cli, Commands, ConfigCommand, CronCommands, GitCommands, GithubCommands,
-    MemoryCommands, OmxCommands, PluginCommands, TmuxCommands,
+    HooksCommands, MemoryCommands, OmxCommands, PluginCommands, TmuxCommands,
 };
 use crate::client::DaemonClient;
 use crate::config::AppConfig;
@@ -213,6 +216,7 @@ async fn real_main() -> Result<()> {
                 Ok(())
             }
         },
+        Commands::Omc(args) => omc::run(args, config.as_ref()).await,
         Commands::Omx { command } => match command {
             OmxCommands::Hook(args) => {
                 let client = DaemonClient::from_config(config.as_ref());
@@ -221,6 +225,7 @@ async fn real_main() -> Result<()> {
                 println!("{}", serde_json::to_string(&response)?);
                 Ok(())
             }
+            OmxCommands::Launch(args) => omx::run(args, config.as_ref()).await,
         },
         Commands::Cron { command } => match command {
             CronCommands::Run { id } => {
@@ -268,6 +273,9 @@ async fn real_main() -> Result<()> {
         Commands::Memory { command } => match command {
             MemoryCommands::Init(args) => memory::init(args),
             MemoryCommands::Status(args) => memory::status(args),
+        },
+        Commands::Hooks { command } => match command {
+            HooksCommands::Install(args) => hooks::install(args),
         },
     }
 }

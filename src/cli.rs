@@ -112,6 +112,8 @@ pub enum Commands {
         #[command(subcommand)]
         command: PluginCommands,
     },
+    /// Launch an OMC (oh-my-claudecode) session with clawhip monitoring.
+    Omc(OmcArgs),
     /// Manage configuration.
     Config {
         #[command(subcommand)]
@@ -121,6 +123,11 @@ pub enum Commands {
     Memory {
         #[command(subcommand)]
         command: MemoryCommands,
+    },
+    /// Install and manage native OMC/OMX hooks.
+    Hooks {
+        #[command(subcommand)]
+        command: HooksCommands,
     },
 }
 
@@ -295,6 +302,8 @@ pub enum PluginCommands {
 pub enum OmxCommands {
     /// Forward an OMX v1 hook envelope to clawhip.
     Hook(OmxHookArgs),
+    /// Launch an OMX session with clawhip monitoring.
+    Launch(OmxLaunchArgs),
 }
 
 #[derive(Debug, Clone, Subcommand)]
@@ -491,6 +500,97 @@ pub struct MemoryStatusArgs {
     /// Daily shard name to inspect under memory/daily/ (YYYY-MM-DD).
     #[arg(long)]
     pub date: Option<String>,
+}
+
+#[derive(Debug, Clone, Args)]
+pub struct OmcArgs {
+    /// The prompt to send to the OMC session after initialization.
+    pub prompt: Option<String>,
+    /// Tmux session name (defaults to worktree/directory basename).
+    #[arg(short = 's', long)]
+    pub session: Option<String>,
+    /// Working directory or worktree path (defaults to git toplevel or CWD).
+    #[arg(short = 'w', long)]
+    pub workdir: Option<PathBuf>,
+    /// Discord channel override.
+    #[arg(long)]
+    pub channel: Option<String>,
+    /// Discord mention override.
+    #[arg(long)]
+    pub mention: Option<String>,
+    /// Comma-separated keywords to monitor.
+    #[arg(long, value_delimiter = ',')]
+    pub keywords: Vec<String>,
+    /// Minutes before stale alert.
+    #[arg(long)]
+    pub stale_minutes: Option<u64>,
+    /// Extra flags passed to `omc` (default: --openclaw --madmax).
+    #[arg(long)]
+    pub omc_flags: Option<String>,
+    /// Attach to the tmux session after creation.
+    #[arg(long, default_value_t = false)]
+    pub attach: bool,
+    /// Skip the hook installation check.
+    #[arg(long, default_value_t = false)]
+    pub skip_hook_check: bool,
+}
+
+#[derive(Debug, Clone, Args)]
+pub struct OmxLaunchArgs {
+    /// The prompt to send to the OMX session after initialization.
+    pub prompt: Option<String>,
+    /// Tmux session name (defaults to worktree/directory basename).
+    #[arg(short = 's', long)]
+    pub session: Option<String>,
+    /// Working directory or worktree path (defaults to git toplevel or CWD).
+    #[arg(short = 'w', long)]
+    pub workdir: Option<PathBuf>,
+    /// Discord channel override.
+    #[arg(long)]
+    pub channel: Option<String>,
+    /// Discord mention override.
+    #[arg(long)]
+    pub mention: Option<String>,
+    /// Comma-separated keywords to monitor.
+    #[arg(long, value_delimiter = ',')]
+    pub keywords: Vec<String>,
+    /// Minutes before stale alert.
+    #[arg(long)]
+    pub stale_minutes: Option<u64>,
+    /// Extra flags passed to `omx` (default: --madmax).
+    #[arg(long)]
+    pub omx_flags: Option<String>,
+    /// Attach to the tmux session after creation.
+    #[arg(long, default_value_t = false)]
+    pub attach: bool,
+    /// Skip the hook installation check.
+    #[arg(long, default_value_t = false)]
+    pub skip_hook_check: bool,
+}
+
+#[derive(Debug, Clone, Subcommand)]
+pub enum HooksCommands {
+    /// Install native hooks for OMC and/or OMX.
+    Install(HooksInstallArgs),
+}
+
+#[derive(Debug, Clone, Args)]
+pub struct HooksInstallArgs {
+    /// Install OMC hooks to ~/.claude/hooks/.
+    #[arg(long, default_value_t = false)]
+    pub omc: bool,
+    /// Install OMX hooks to .omx/hooks/.
+    #[arg(long, default_value_t = false)]
+    pub omx: bool,
+    /// Install both OMC and OMX hooks.
+    #[arg(long, default_value_t = false)]
+    pub all: bool,
+    /// Override OMC hooks destination directory.
+    #[arg(long)]
+    pub omc_dir: Option<PathBuf>,
+    /// Override OMX hooks destination directory.
+    #[arg(long)]
+    pub omx_dir: Option<PathBuf>,
 }
 
 #[derive(Debug, Clone, Default, Subcommand)]
@@ -827,7 +927,9 @@ mod tests {
             panic!("expected omx command");
         };
 
-        let OmxCommands::Hook(args) = command;
+        let OmxCommands::Hook(args) = command else {
+            panic!("expected omx hook command");
+        };
 
         assert_eq!(
             args.file.as_deref(),
@@ -963,5 +1065,67 @@ mod tests {
 
         assert!(systemd);
         assert!(skip_star_prompt);
+    }
+
+    #[test]
+    fn parses_hooks_install_subcommand() {
+        let cli = Cli::parse_from(["clawhip", "hooks", "install", "--omc", "--omx"]);
+
+        let Commands::Hooks { command } = cli.command.expect("hooks command") else {
+            panic!("expected hooks command");
+        };
+
+        let HooksCommands::Install(args) = command;
+
+        assert!(args.omc);
+        assert!(args.omx);
+        assert!(!args.all);
+    }
+
+    #[test]
+    fn parses_hooks_install_all_flag() {
+        let cli = Cli::parse_from(["clawhip", "hooks", "install", "--all"]);
+
+        let Commands::Hooks { command } = cli.command.expect("hooks command") else {
+            panic!("expected hooks command");
+        };
+
+        let HooksCommands::Install(args) = command;
+
+        assert!(!args.omc);
+        assert!(!args.omx);
+        assert!(args.all);
+    }
+
+    #[test]
+    fn parses_hooks_install_with_dir_overrides() {
+        let cli = Cli::parse_from([
+            "clawhip",
+            "hooks",
+            "install",
+            "--omc",
+            "--omc-dir",
+            "/tmp/claude-hooks",
+            "--omx",
+            "--omx-dir",
+            "/tmp/omx-hooks",
+        ]);
+
+        let Commands::Hooks { command } = cli.command.expect("hooks command") else {
+            panic!("expected hooks command");
+        };
+
+        let HooksCommands::Install(args) = command;
+
+        assert!(args.omc);
+        assert!(args.omx);
+        assert_eq!(
+            args.omc_dir,
+            Some(PathBuf::from("/tmp/claude-hooks"))
+        );
+        assert_eq!(
+            args.omx_dir,
+            Some(PathBuf::from("/tmp/omx-hooks"))
+        );
     }
 }
