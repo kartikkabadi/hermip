@@ -7,8 +7,14 @@ use crate::config::AppConfig;
 use crate::tmux_wrapper;
 
 /// Default keywords monitored for OMX sessions.
-const DEFAULT_OMX_KEYWORDS: &[&str] =
-    &["error", "Error", "FAILED", "PR created", "panic", "complete"];
+const DEFAULT_OMX_KEYWORDS: &[&str] = &[
+    "error",
+    "Error",
+    "FAILED",
+    "PR created",
+    "panic",
+    "complete",
+];
 
 /// Default stale timeout in minutes for OMX sessions.
 const DEFAULT_OMX_STALE_MINUTES: u64 = 30;
@@ -21,9 +27,7 @@ pub async fn run(args: OmxLaunchArgs, config: &AppConfig) -> Result<()> {
     // Check if hooks are installed
     if !hooks_installed(&workdir) {
         eprintln!("clawhip hooks not found in this workspace.");
-        eprintln!(
-            "Install with: clawhip hooks install --all"
-        );
+        eprintln!("Install with: clawhip hooks install --all");
         if !args.skip_hook_check {
             return Err("hooks not installed — pass --skip-hook-check to launch anyway".into());
         }
@@ -247,23 +251,21 @@ fn hooks_installed(workdir: &Path) -> bool {
 
     // Check for Claude Code settings.json with clawhip hooks
     let claude_settings = workdir.join(".claude/settings.json");
-    if claude_settings.is_file() {
-        if let Ok(content) = std::fs::read_to_string(&claude_settings) {
-            if content.contains("clawhip") {
-                return true;
-            }
-        }
+    if claude_settings.is_file()
+        && let Ok(content) = std::fs::read_to_string(&claude_settings)
+        && content.contains("clawhip")
+    {
+        return true;
     }
 
     // Check global Claude Code settings
     let home = env::var("HOME").unwrap_or_default();
     let global_settings = PathBuf::from(&home).join(".claude/settings.json");
-    if global_settings.is_file() {
-        if let Ok(content) = std::fs::read_to_string(&global_settings) {
-            if content.contains("clawhip") {
-                return true;
-            }
-        }
+    if global_settings.is_file()
+        && let Ok(content) = std::fs::read_to_string(&global_settings)
+        && content.contains("clawhip")
+    {
+        return true;
     }
 
     false

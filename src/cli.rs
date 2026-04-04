@@ -1119,13 +1119,7 @@ mod tests {
 
         assert!(args.omc);
         assert!(args.omx);
-        assert_eq!(
-            args.omc_dir,
-            Some(PathBuf::from("/tmp/claude-hooks"))
-        );
-        assert_eq!(
-            args.omx_dir,
-            Some(PathBuf::from("/tmp/omx-hooks"))
-        );
+        assert_eq!(args.omc_dir, Some(PathBuf::from("/tmp/claude-hooks")));
+        assert_eq!(args.omx_dir, Some(PathBuf::from("/tmp/omx-hooks")));
     }
 }

@@ -1,3 +1,4 @@
+#[allow(dead_code)]
 pub mod prompt_deliver;
 
 use std::env;

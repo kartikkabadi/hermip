@@ -100,10 +100,9 @@ async fn try_deliver(config: &PromptDeliverConfig, attempt: u32) -> Result<Deliv
     let verified = content_changed && keyword_verified;
 
     if !content_changed {
-        return Err(format!(
-            "attempt {attempt}: pane content unchanged after sending prompt"
-        )
-        .into());
+        return Err(
+            format!("attempt {attempt}: pane content unchanged after sending prompt").into(),
+        );
     }
 
     Ok(DeliveryResult {
