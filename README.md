@@ -304,10 +304,13 @@ token = "your-dedicated-clawhip-bot-token"
 default_channel = "your-default-channel-id"
 
 [dispatch]
+routine_batch_window_secs = 5
 ci_batch_window_secs = 300
 ```
 
 Legacy `[discord]` config is still accepted and normalized at load time.
+
+`[dispatch].routine_batch_window_secs` controls the default Discord-only routine burst batch window. Leave it unset to keep the 5-second default, or set it to `0` to disable routine batching entirely. In v1, grouped routine bursts suppress route/event mentions for 2+ items, while explicit failure/stale/CI paths still bypass the routine batcher.
 
 `[dispatch].ci_batch_window_secs` controls how long clawhip waits before flushing a GitHub CI batch summary. Leave it unset to keep the 30-second default, or increase it for longer workflows that finish jobs over several minutes.
 
@@ -773,7 +776,7 @@ curl --proto '=https' --tlsv1.2 -LsSf https://github.com/Yeachan-Heo/clawhip/rel
 
 This installs the latest prebuilt `clawhip` binary from GitHub Releases into `$CARGO_HOME/bin` (typically `~/.cargo/bin`).
 
-Release artifacts are generated for these Rust target triples: `x86_64-unknown-linux-gnu`, `aarch64-unknown-linux-gnu`, `x86_64-apple-darwin`, `aarch64-apple-darwin`, and `x86_64-pc-windows-msvc`.
+Release artifacts are generated for these Rust target triples: `x86_64-unknown-linux-gnu`, `aarch64-unknown-linux-gnu`, `x86_64-apple-darwin`, and `aarch64-apple-darwin`.
 
 ### Repo-local install
 

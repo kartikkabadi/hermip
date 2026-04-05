@@ -1,36 +1,34 @@
 # Changelog
 
-## 0.5.1 - 2026-04-02
+## 0.5.3 - 2026-04-04
 
 ### Highlights
 
-- made native OMX hook envelopes a first-class clawhip integration surface
-- added tmux watch audit trail and active watch listing
-- made the CI batch window configurable
-- fixed route-channel handling for tmux session startup events
+- fix `clawhip send --channel` being overridden by route or default channel config
+- for `custom` events, the explicit event channel now takes highest priority over route and default channels
 
 ### Upgrade notes
 
-- crate version is now `0.5.1`
-- native OMX hook-bridge + SDK setup (`integrations/omx/`, `clawhip omx hook`, `/api/omx/hook`) is the default/recommended integration path
-- no config migration is required for this patch release
+- crate version is now `0.5.3`
+- existing config remains compatible; no migration required
+- if you relied on a catch-all `event = "custom"` route to redirect all `clawhip send` traffic to a specific channel, that route channel will now only apply when `--channel` is not specified
 
-## 0.4.0 - 2026-03-11
+## 0.5.2 - 2026-04-04
 
 ### Highlights
 
-- added clone-local install lifecycle polish: repo-local `install.sh`, `clawhip install`, and `clawhip update`/`uninstall` now cover the current dev build workflow more cleanly
-- added an optional post-install GitHub star prompt for interactive installs, with explicit opt-in only and skip controls for both the shell installer and CLI install path
-- shipped `clawhip memory init` and `clawhip memory status` for filesystem-offloaded memory scaffolds in repos and workspaces
-- normalized native OMC/OMX payloads into the lower-noise `session.*` contract while keeping legacy `agent.*` compatibility
-- refreshed live verification guidance around daemon health/status and custom send delivery
+- reduced routine Discord burst noise with configurable batching for routine notifications
+- allow `stale_minutes = 0` to disable tmux stale detection cleanly
+- keep cron startup alive when persisted scheduler state is empty or invalid
+- surface source failures as degraded alerts before the daemon appears healthy
+- make matched route channels override source-provided channel hints consistently
+- quiet invalid git monitor paths so they stop drowning out actionable failures
 
 ### Upgrade notes
 
-- crate version is now `0.4.0`
-- interactive install flows may offer a GitHub star prompt only when `gh` is installed and authenticated; disable it with `--skip-star-prompt` or `CLAWHIP_SKIP_STAR_PROMPT=1`
-- runtime memory scaffolds can now be bootstrapped and inspected with `clawhip memory init` and `clawhip memory status`
-- existing config remains compatible; no config migration is required for this release
+- crate version is now `0.5.2`
+- existing config remains compatible; no schema migration is required for this patch release
+- `stale_minutes = 0` is now treated as an explicit disable for tmux stale alerts
 
 ## 0.3.0 - 2026-03-09
 
