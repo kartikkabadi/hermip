@@ -29,15 +29,24 @@ pub fn install(systemd: bool, skip_star_prompt: bool) -> Result<()> {
 
 pub fn update(restart: bool) -> Result<()> {
     let repo_root = current_repo_root()?;
+    update_repo(&repo_root, restart)
+}
+
+pub fn update_from_repo(restart: bool) -> Result<()> {
+    let repo_root = find_repo_root()?;
+    update_repo(&repo_root, restart)
+}
+
+fn update_repo(repo_root: &Path, restart: bool) -> Result<()> {
     run(Command::new("git")
         .arg("-C")
-        .arg(&repo_root)
+        .arg(repo_root)
         .arg("pull")
         .arg("--ff-only"))?;
     run(Command::new("cargo")
         .arg("install")
         .arg("--path")
-        .arg(&repo_root)
+        .arg(repo_root)
         .arg("--force"))?;
     ensure_config_dir()?;
     plugins::install_bundled_plugins(&config_dir().join("plugins"))?;
@@ -46,6 +55,31 @@ pub fn update(restart: bool) -> Result<()> {
     }
     println!("clawhip update complete");
     Ok(())
+}
+
+fn find_repo_root() -> Result<PathBuf> {
+    if let Ok(root) = current_repo_root() {
+        return Ok(root);
+    }
+    let output = Command::new("cargo")
+        .arg("locate-project")
+        .arg("--workspace")
+        .arg("--message-format=plain")
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .output()
+        .ok()
+        .filter(|o| o.status.success())
+        .and_then(|o| String::from_utf8(o.stdout).ok());
+    if let Some(path) = output {
+        let manifest = PathBuf::from(path.trim());
+        if let Some(parent) = manifest.parent()
+            && parent.join("src").exists()
+        {
+            return Ok(parent.to_path_buf());
+        }
+    }
+    Err(anyhow!("could not locate clawhip repo root; run from the git clone or ensure cargo is available").into())
 }
 
 pub fn uninstall(remove_systemd: bool, remove_config: bool) -> Result<()> {

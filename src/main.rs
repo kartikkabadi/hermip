@@ -23,6 +23,7 @@ mod sink;
 mod slack;
 mod source;
 mod tmux_wrapper;
+mod update;
 
 use std::sync::Arc;
 
@@ -31,6 +32,7 @@ use clap::Parser;
 use crate::cli::{
     AgentCommands, Cli, Commands, ConfigCommand, CronCommands, GitCommands, GithubCommands,
     HooksCommands, MemoryCommands, NativeCommands, OmxCommands, PluginCommands, TmuxCommands,
+    UpdateCommands,
 };
 use crate::client::DaemonClient;
 use crate::config::AppConfig;
@@ -175,7 +177,44 @@ async fn real_main() -> Result<()> {
             systemd,
             skip_star_prompt,
         } => lifecycle::install(systemd, skip_star_prompt),
-        Commands::Update { restart } => lifecycle::update(restart),
+        Commands::Update { command } => match command {
+            UpdateCommands::Run { restart } => lifecycle::update(restart),
+            UpdateCommands::Check => {
+                let http = reqwest::Client::builder()
+                    .user_agent(format!("clawhip/{VERSION}"))
+                    .build()?;
+                match update::check_latest_version(&http).await {
+                    Ok(Some((version, url))) => {
+                        if update::version_is_newer(&version) {
+                            println!("Update available: v{VERSION} -> {version}\n{url}");
+                        } else {
+                            println!("Already up to date (v{VERSION})");
+                        }
+                    }
+                    Ok(None) => println!("No releases found"),
+                    Err(error) => eprintln!("Check failed: {error}"),
+                }
+                Ok(())
+            }
+            UpdateCommands::Approve => {
+                let client = DaemonClient::from_config(config.as_ref());
+                let result = client.post_update_action("approve").await?;
+                println!("{}", serde_json::to_string_pretty(&result)?);
+                Ok(())
+            }
+            UpdateCommands::Dismiss => {
+                let client = DaemonClient::from_config(config.as_ref());
+                let result = client.post_update_action("dismiss").await?;
+                println!("{}", serde_json::to_string_pretty(&result)?);
+                Ok(())
+            }
+            UpdateCommands::Status => {
+                let client = DaemonClient::from_config(config.as_ref());
+                let result = client.get_update_status().await?;
+                println!("{}", serde_json::to_string_pretty(&result)?);
+                Ok(())
+            }
+        },
         Commands::Uninstall {
             remove_systemd,
             remove_config,

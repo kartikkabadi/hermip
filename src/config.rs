@@ -29,6 +29,8 @@ pub struct AppConfig {
     pub monitors: MonitorConfig,
     #[serde(default, skip_serializing_if = "CronConfig::is_empty")]
     pub cron: CronConfig,
+    #[serde(default, skip_serializing_if = "crate::update::UpdateConfig::is_empty")]
+    pub update: crate::update::UpdateConfig,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]

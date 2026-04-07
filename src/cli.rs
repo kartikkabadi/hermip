@@ -102,8 +102,8 @@ pub enum Commands {
     },
     /// Update clawhip from the current git clone.
     Update {
-        #[arg(long, default_value_t = false)]
-        restart: bool,
+        #[command(subcommand)]
+        command: UpdateCommands,
     },
     /// Uninstall clawhip.
     Uninstall {
@@ -380,6 +380,23 @@ pub enum CronCommands {
         /// Cron job id from [[cron.jobs]].id.
         id: String,
     },
+}
+
+#[derive(Debug, Clone, Subcommand)]
+pub enum UpdateCommands {
+    /// Pull and reinstall clawhip from the current git clone.
+    Run {
+        #[arg(long, default_value_t = false)]
+        restart: bool,
+    },
+    /// Check whether a newer release is available on GitHub.
+    Check,
+    /// Approve a pending update detected by the daemon.
+    Approve,
+    /// Dismiss (skip) a pending update without applying it.
+    Dismiss,
+    /// Show the current pending-update status from the daemon.
+    Status,
 }
 
 #[derive(Debug, Clone, Args)]
