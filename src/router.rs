@@ -5,7 +5,7 @@ use serde_json::json;
 use crate::Result;
 use crate::config::{AppConfig, RouteRule, default_sink_name};
 use crate::dynamic_tokens;
-use crate::events::{IncomingEvent, MessageFormat};
+use crate::events::{IncomingEvent, MessageFormat, RoutingMetadata};
 #[cfg(test)]
 use crate::render::DefaultRenderer;
 use crate::render::Renderer;
@@ -185,11 +185,7 @@ impl Router {
 
     fn routes_for<'a>(&'a self, event: &IncomingEvent) -> Vec<&'a RouteRule> {
         let context = event.template_context();
-        self.config
-            .routes
-            .iter()
-            .filter(|route| route_matches(route, event.canonical_kind(), &context))
-            .collect()
+        matching_routes_for(&self.config.routes, event.canonical_kind(), &context)
     }
 
     fn target_for(
@@ -244,14 +240,24 @@ impl Router {
     }
 }
 
+#[cfg_attr(not(test), allow(dead_code))]
 pub(crate) fn resolve_tmux_session_channel(
     config: &AppConfig,
     session_name: &str,
 ) -> Option<String> {
-    let tmux_event =
-        IncomingEvent::tmux_keyword(session_name.to_string(), String::new(), String::new(), None);
-    let tmux_context = tmux_event.template_context();
-    let session_event = IncomingEvent {
+    resolve_tmux_session_channel_with_metadata(config, session_name, &RoutingMetadata::default())
+}
+
+pub(crate) fn resolve_tmux_session_channel_with_metadata(
+    config: &AppConfig,
+    session_name: &str,
+    routing: &RoutingMetadata,
+) -> Option<String> {
+    let tmux_context =
+        IncomingEvent::tmux_keyword(session_name.to_string(), String::new(), String::new(), None)
+            .with_routing_metadata(routing)
+            .template_context();
+    let session_context = IncomingEvent {
         kind: "session.started".to_string(),
         channel: None,
         mention: None,
@@ -262,17 +268,33 @@ pub(crate) fn resolve_tmux_session_channel(
             "session": session_name,
             "tool": "tmux",
         }),
-    };
-    let session_context = session_event.template_context();
+    }
+    .with_routing_metadata(routing)
+    .template_context();
+    let prefer_metadata = prefers_metadata_first_routing("tmux.keyword", &tmux_context)
+        || prefers_metadata_first_routing("session.started", &session_context);
+    let mut preferred = Vec::new();
+    let mut heuristic = Vec::new();
 
-    for route in &config.routes {
-        let matches_tmux = route_matches(route, tmux_event.canonical_kind(), &tmux_context);
-        let matches_session =
-            route_matches(route, session_event.canonical_kind(), &session_context);
-        if !(matches_tmux || matches_session) || route.effective_sink() != "discord" {
+    for route in config.routes.iter().filter(|route| {
+        route_matches(route, "tmux.keyword", &tmux_context)
+            || route_matches(route, "session.started", &session_context)
+    }) {
+        if prefer_metadata && route_uses_session_name_prefix_heuristics(route) {
+            heuristic.push(route);
+        } else {
+            preferred.push(route);
+        }
+    }
+
+    if !prefer_metadata {
+        preferred.extend(heuristic);
+    }
+
+    for route in preferred {
+        if route.effective_sink() != "discord" {
             continue;
         }
-
         if let Some(channel) = route_channel(route) {
             return Some(channel.to_string());
         }
@@ -316,6 +338,60 @@ fn route_matches(
                 .get(key)
                 .map(|actual| glob_match(expected, actual))
                 .unwrap_or(false)
+        })
+}
+
+fn matching_routes_for<'a>(
+    routes: &'a [RouteRule],
+    canonical_kind: &str,
+    context: &std::collections::BTreeMap<String, String>,
+) -> Vec<&'a RouteRule> {
+    let prefer_metadata = prefers_metadata_first_routing(canonical_kind, context);
+    let mut preferred = Vec::new();
+    let mut heuristic = Vec::new();
+
+    for route in routes
+        .iter()
+        .filter(|route| route_matches(route, canonical_kind, context))
+    {
+        if prefer_metadata && route_uses_session_name_prefix_heuristics(route) {
+            heuristic.push(route);
+        } else {
+            preferred.push(route);
+        }
+    }
+
+    if !prefer_metadata {
+        preferred.extend(heuristic);
+    }
+
+    preferred
+}
+
+fn prefers_metadata_first_routing(
+    canonical_kind: &str,
+    context: &std::collections::BTreeMap<String, String>,
+) -> bool {
+    if !(canonical_kind.starts_with("session.") || canonical_kind.starts_with("tmux.")) {
+        return false;
+    }
+
+    [
+        "project",
+        "repo_name",
+        "repo_path",
+        "worktree_path",
+        "session_id",
+    ]
+    .into_iter()
+    .filter_map(|key| context.get(key))
+    .any(|value| !value.trim().is_empty())
+}
+
+fn route_uses_session_name_prefix_heuristics(route: &RouteRule) -> bool {
+    !route.filter.is_empty()
+        && route.filter.iter().all(|(key, expected)| {
+            matches!(key.as_str(), "session" | "session_name") && expected.contains('*')
         })
 }
 
@@ -371,7 +447,7 @@ pub(crate) fn glob_match(pattern: &str, value: &str) -> bool {
 mod tests {
     use super::*;
     use crate::config::{DefaultsConfig, RouteRule};
-    use crate::events::normalize_event;
+    use crate::events::{RoutingMetadata, normalize_event};
     use crate::render::DefaultRenderer;
     use crate::sink::{DiscordSink, SlackSink};
     use serde_json::json;
@@ -1280,6 +1356,106 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn tmux_routes_prefer_repo_metadata_over_session_prefix_heuristics() {
+        let config = AppConfig {
+            defaults: DefaultsConfig {
+                channel: Some("default".into()),
+                format: MessageFormat::Compact,
+            },
+            routes: vec![
+                RouteRule {
+                    event: "tmux.*".into(),
+                    sink: "discord".into(),
+                    filter: [("session_name".to_string(), "clawhip-*".to_string())]
+                        .into_iter()
+                        .collect(),
+                    channel: Some("heuristic-route".into()),
+                    ..RouteRule::default()
+                },
+                RouteRule {
+                    event: "tmux.*".into(),
+                    sink: "discord".into(),
+                    filter: [("repo_name".to_string(), "clawhip".to_string())]
+                        .into_iter()
+                        .collect(),
+                    channel: Some("metadata-route".into()),
+                    ..RouteRule::default()
+                },
+            ],
+            ..AppConfig::default()
+        };
+        let router = Router::new(Arc::new(config));
+        let event = IncomingEvent::tmux_keyword(
+            "clawhip-issue-152".into(),
+            "error".into(),
+            "boom".into(),
+            None,
+        )
+        .with_routing_metadata(&RoutingMetadata {
+            repo_name: Some("clawhip".into()),
+            project: Some("clawhip".into()),
+            worktree_path: Some("/repo/clawhip.worktrees/issue-152".into()),
+            ..RoutingMetadata::default()
+        });
+
+        let deliveries = router.resolve(&event).await.unwrap();
+        assert_eq!(
+            deliveries.first().map(|delivery| &delivery.target),
+            Some(&SinkTarget::DiscordChannel("metadata-route".into()))
+        );
+    }
+
+    #[tokio::test]
+    async fn session_routes_prefer_repo_metadata_over_session_prefix_heuristics() {
+        let config = AppConfig {
+            defaults: DefaultsConfig {
+                channel: Some("default".into()),
+                format: MessageFormat::Compact,
+            },
+            routes: vec![
+                RouteRule {
+                    event: "session.*".into(),
+                    sink: "discord".into(),
+                    filter: [("session_name".to_string(), "clawhip-*".to_string())]
+                        .into_iter()
+                        .collect(),
+                    channel: Some("heuristic-route".into()),
+                    ..RouteRule::default()
+                },
+                RouteRule {
+                    event: "session.*".into(),
+                    sink: "discord".into(),
+                    filter: [("repo_name".to_string(), "clawhip".to_string())]
+                        .into_iter()
+                        .collect(),
+                    channel: Some("metadata-route".into()),
+                    ..RouteRule::default()
+                },
+            ],
+            ..AppConfig::default()
+        };
+        let router = Router::new(Arc::new(config));
+        let event = normalize_event(IncomingEvent {
+            kind: "session.started".into(),
+            channel: None,
+            mention: None,
+            format: None,
+            template: None,
+            payload: json!({
+                "session_name": "clawhip-issue-152",
+                "repo_name": "clawhip",
+                "worktree_path": "/repo/clawhip.worktrees/issue-152",
+            }),
+        });
+
+        let deliveries = router.resolve(&event).await.unwrap();
+        assert_eq!(
+            deliveries.first().map(|delivery| &delivery.target),
+            Some(&SinkTarget::DiscordChannel("metadata-route".into()))
+        );
+    }
+
+    #[tokio::test]
     async fn webhook_route_is_used_as_delivery_target() {
         let config = AppConfig {
             defaults: DefaultsConfig {
@@ -1603,6 +1779,81 @@ mod tests {
         assert_eq!(
             resolve_tmux_session_channel(&config, "xeroclaw-42").as_deref(),
             Some("xeroclaw-dev")
+        );
+    }
+
+    #[test]
+    fn resolve_tmux_session_channel_with_metadata_prefers_repo_route_over_prefix_heuristic() {
+        let config = AppConfig {
+            defaults: DefaultsConfig {
+                channel: Some("default".into()),
+                format: MessageFormat::Compact,
+            },
+            routes: vec![
+                RouteRule {
+                    event: "tmux.*".into(),
+                    filter: BTreeMap::from([("session".into(), "clawhip-*".into())]),
+                    sink: "discord".into(),
+                    channel: Some("heuristic-route".into()),
+                    ..RouteRule::default()
+                },
+                RouteRule {
+                    event: "tmux.*".into(),
+                    filter: BTreeMap::from([("repo_name".into(), "clawhip".into())]),
+                    sink: "discord".into(),
+                    channel: Some("metadata-route".into()),
+                    ..RouteRule::default()
+                },
+            ],
+            ..AppConfig::default()
+        };
+
+        assert_eq!(
+            resolve_tmux_session_channel_with_metadata(
+                &config,
+                "clawhip-issue-152",
+                &RoutingMetadata {
+                    repo_name: Some("clawhip".into()),
+                    project: Some("clawhip".into()),
+                    worktree_path: Some("/repo/clawhip.worktrees/issue-152".into()),
+                    ..RoutingMetadata::default()
+                }
+            )
+            .as_deref(),
+            Some("metadata-route")
+        );
+    }
+
+    #[test]
+    fn resolve_tmux_session_channel_with_metadata_does_not_fallback_to_prefix_heuristics() {
+        let config = AppConfig {
+            defaults: DefaultsConfig {
+                channel: Some("default".into()),
+                format: MessageFormat::Compact,
+            },
+            routes: vec![RouteRule {
+                event: "tmux.*".into(),
+                filter: BTreeMap::from([("session".into(), "clawhip-*".into())]),
+                sink: "discord".into(),
+                channel: Some("heuristic-route".into()),
+                ..RouteRule::default()
+            }],
+            ..AppConfig::default()
+        };
+
+        assert_eq!(
+            resolve_tmux_session_channel_with_metadata(
+                &config,
+                "clawhip-issue-152",
+                &RoutingMetadata {
+                    repo_name: Some("clawhip".into()),
+                    project: Some("clawhip".into()),
+                    worktree_path: Some("/repo/clawhip.worktrees/issue-152".into()),
+                    ..RoutingMetadata::default()
+                }
+            )
+            .as_deref(),
+            Some("default")
         );
     }
 

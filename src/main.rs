@@ -393,6 +393,7 @@ fn format_tmux_list(registrations: &[crate::source::RegisteredTmuxSession]) -> S
 #[cfg(test)]
 mod tests {
     use super::format_tmux_list;
+    use crate::events::RoutingMetadata;
     use crate::source::tmux::{ParentProcessInfo, RegisteredTmuxSession, RegistrationSource};
 
     #[test]
@@ -401,6 +402,7 @@ mod tests {
             session: "issue-105".into(),
             channel: Some("alerts".into()),
             mention: Some("<@123>".into()),
+            routing: RoutingMetadata::default(),
             keywords: vec!["error".into(), "complete".into()],
             keyword_window_secs: 30,
             stale_minutes: 10,

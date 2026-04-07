@@ -57,6 +57,24 @@ pub struct IncomingEvent {
     pub payload: Value,
 }
 
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct RoutingMetadata {
+    #[serde(default)]
+    pub tool: Option<String>,
+    #[serde(default)]
+    pub project: Option<String>,
+    #[serde(default)]
+    pub repo_name: Option<String>,
+    #[serde(default)]
+    pub repo_path: Option<String>,
+    #[serde(default)]
+    pub worktree_path: Option<String>,
+    #[serde(default)]
+    pub session_id: Option<String>,
+    #[serde(default)]
+    pub branch: Option<String>,
+}
+
 #[derive(Debug, Deserialize)]
 struct IncomingEventWire {
     #[serde(rename = "type", alias = "kind", alias = "event")]
@@ -610,6 +628,28 @@ impl IncomingEvent {
                 payload.insert("worktree_path".to_string(), json!(worktree_path));
             }
         }
+        self
+    }
+
+    pub fn with_routing_metadata(mut self, routing: &RoutingMetadata) -> Self {
+        let Some(payload) = self.payload.as_object_mut() else {
+            return self;
+        };
+
+        for (key, value) in [
+            ("tool", routing.tool.as_deref()),
+            ("project", routing.project.as_deref()),
+            ("repo_name", routing.repo_name.as_deref()),
+            ("repo_path", routing.repo_path.as_deref()),
+            ("worktree_path", routing.worktree_path.as_deref()),
+            ("session_id", routing.session_id.as_deref()),
+            ("branch", routing.branch.as_deref()),
+        ] {
+            if let Some(value) = value.map(str::trim).filter(|value| !value.is_empty()) {
+                payload.insert(key.to_string(), json!(value));
+            }
+        }
+
         self
     }
 

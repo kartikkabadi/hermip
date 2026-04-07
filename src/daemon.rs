@@ -519,7 +519,7 @@ mod tests {
     use super::*;
     use crate::config::AppConfig;
     use crate::config::{CronJob, CronJobKind};
-    use crate::events::MessageFormat;
+    use crate::events::{MessageFormat, RoutingMetadata};
     use crate::router::Router;
     use crate::sink::SinkTarget;
     use crate::source::tmux::{ParentProcessInfo, RegistrationSource};
@@ -750,6 +750,7 @@ mod tests {
                 session: "issue-105".into(),
                 channel: Some("alerts".into()),
                 mention: Some("<@123>".into()),
+                routing: RoutingMetadata::default(),
                 keywords: vec!["error".into()],
                 keyword_window_secs: 30,
                 stale_minutes: 15,

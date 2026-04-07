@@ -1,4 +1,5 @@
 use std::fs;
+use std::path::Path;
 use std::time::Duration;
 
 use tokio::process::Command;
@@ -8,7 +9,8 @@ use crate::Result;
 use crate::cli::{TmuxNewArgs, TmuxWatchArgs, TmuxWrapperFormat};
 use crate::client::DaemonClient;
 use crate::config::AppConfig;
-use crate::router::resolve_tmux_session_channel;
+use crate::events::RoutingMetadata;
+use crate::router::resolve_tmux_session_channel_with_metadata;
 use crate::source::tmux::{
     ParentProcessInfo, RegisteredTmuxSession, RegistrationSource, content_hash,
     current_timestamp_rfc3339, monitor_registered_session, session_exists, tmux_bin,
@@ -42,6 +44,7 @@ struct TmuxMonitorArgs {
     session: String,
     channel: Option<String>,
     mention: Option<String>,
+    routing: RoutingMetadata,
     keywords: Vec<String>,
     keyword_window_secs: u64,
     stale_minutes: u64,
@@ -57,6 +60,7 @@ impl From<&TmuxNewArgs> for TmuxMonitorArgs {
             session: value.session.clone(),
             channel: value.channel.clone(),
             mention: value.mention.clone(),
+            routing: routing_metadata_for_cwd(value.cwd.as_deref()),
             keywords: value.keywords.clone(),
             keyword_window_secs: default_keyword_window_secs(),
             stale_minutes: value.stale_minutes,
@@ -72,7 +76,11 @@ impl TmuxMonitorArgs {
     fn from_new_args(value: &TmuxNewArgs, config: &AppConfig) -> Self {
         let mut monitor_args = Self::from(value);
         if monitor_args.channel.is_none() {
-            monitor_args.channel = resolve_tmux_session_channel(config, &value.session);
+            monitor_args.channel = resolve_tmux_session_channel_with_metadata(
+                config,
+                &value.session,
+                &monitor_args.routing,
+            );
         }
         monitor_args
     }
@@ -84,6 +92,7 @@ impl From<&TmuxWatchArgs> for TmuxMonitorArgs {
             session: value.session.clone(),
             channel: value.channel.clone(),
             mention: value.mention.clone(),
+            routing: routing_metadata_for_session(&value.session),
             keywords: value.keywords.clone(),
             keyword_window_secs: default_keyword_window_secs(),
             stale_minutes: value.stale_minutes,
@@ -101,6 +110,7 @@ impl From<TmuxMonitorArgs> for RegisteredTmuxSession {
             session: value.session,
             channel: value.channel,
             mention: value.mention,
+            routing: value.routing,
             keywords: value.keywords,
             keyword_window_secs: value.keyword_window_secs,
             stale_minutes: value.stale_minutes,
@@ -111,6 +121,80 @@ impl From<TmuxMonitorArgs> for RegisteredTmuxSession {
             active_wrapper_monitor: true,
         }
     }
+}
+
+fn routing_metadata_for_cwd(cwd: Option<&str>) -> RoutingMetadata {
+    let Some(cwd) = cwd.map(str::trim).filter(|cwd| !cwd.is_empty()) else {
+        return RoutingMetadata::default();
+    };
+    let workdir = Path::new(cwd);
+    let worktree_path = fs::canonicalize(workdir)
+        .unwrap_or_else(|_| workdir.to_path_buf())
+        .to_string_lossy()
+        .into_owned();
+    let repo_path = git_output(workdir, &["rev-parse", "--show-toplevel"]);
+    let project = detect_project(workdir).or_else(|| {
+        repo_path
+            .as_deref()
+            .map(|path| dir_basename(Path::new(path)))
+    });
+    let branch = git_output(workdir, &["branch", "--show-current"]);
+
+    RoutingMetadata {
+        project: project.clone(),
+        repo_name: project,
+        repo_path,
+        worktree_path: Some(worktree_path),
+        branch,
+        ..RoutingMetadata::default()
+    }
+}
+
+fn routing_metadata_for_session(session: &str) -> RoutingMetadata {
+    let cwd = std::process::Command::new(tmux_bin())
+        .args([
+            "display-message",
+            "-p",
+            "-t",
+            session,
+            "#{pane_current_path}",
+        ])
+        .output()
+        .ok()
+        .filter(|output| output.status.success())
+        .map(|output| String::from_utf8_lossy(&output.stdout).trim().to_string())
+        .filter(|value| !value.is_empty());
+
+    routing_metadata_for_cwd(cwd.as_deref())
+}
+
+fn detect_project(workdir: &Path) -> Option<String> {
+    let common_dir = git_output(
+        workdir,
+        &["rev-parse", "--path-format=absolute", "--git-common-dir"],
+    )?;
+
+    Path::new(&common_dir)
+        .parent()
+        .and_then(|path| path.file_name())
+        .map(|name| name.to_string_lossy().into_owned())
+}
+
+fn git_output(workdir: &Path, args: &[&str]) -> Option<String> {
+    std::process::Command::new("git")
+        .args(args)
+        .current_dir(workdir)
+        .output()
+        .ok()
+        .filter(|output| output.status.success())
+        .map(|output| String::from_utf8_lossy(&output.stdout).trim().to_string())
+        .filter(|value| !value.is_empty())
+}
+
+fn dir_basename(path: &Path) -> String {
+    path.file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "unknown".into())
 }
 
 async fn register_and_start_monitor(
@@ -368,6 +452,19 @@ mod tests {
     use super::*;
     use crate::config::{AppConfig, DefaultsConfig, RouteRule};
     use std::collections::BTreeMap;
+    use std::process::Command as StdCommand;
+    use tempfile::tempdir;
+
+    fn init_git_repo() -> tempfile::TempDir {
+        let dir = tempdir().expect("tempdir");
+        let status = StdCommand::new("git")
+            .args(["init", "--quiet"])
+            .current_dir(dir.path())
+            .status()
+            .expect("git init");
+        assert!(status.success(), "git init should succeed");
+        dir
+    }
 
     #[test]
     fn build_command_to_send_preserves_shell_arguments_when_joining() {
@@ -485,6 +582,7 @@ mod tests {
             session: "issue-105".into(),
             channel: Some("alerts".into()),
             mention: None,
+            routing: RoutingMetadata::default(),
             keywords: vec!["error".into()],
             keyword_window_secs: 30,
             stale_minutes: 10,
@@ -512,6 +610,7 @@ mod tests {
             session: "issue-105".into(),
             channel: Some("alerts".into()),
             mention: Some("<@123>".into()),
+            routing: RoutingMetadata::default(),
             keywords: vec!["error".into(), "complete".into()],
             keyword_window_secs: 30,
             stale_minutes: 12,
@@ -577,6 +676,65 @@ mod tests {
         let monitor_args = TmuxMonitorArgs::from_new_args(&args, &config);
 
         assert_eq!(monitor_args.channel.as_deref(), Some("xeroclaw-dev"));
+    }
+
+    #[test]
+    fn new_args_auto_resolve_channel_prefers_repo_metadata_over_session_prefix_heuristics() {
+        let repo = init_git_repo();
+        let args = TmuxNewArgs {
+            session: "clawhip-issue-152".into(),
+            window_name: None,
+            cwd: Some(repo.path().to_string_lossy().into_owned()),
+            channel: None,
+            mention: None,
+            keywords: Vec::new(),
+            stale_minutes: 10,
+            format: None,
+            attach: false,
+            retry_enter: true,
+            retry_enter_count: crate::cli::DEFAULT_RETRY_ENTER_COUNT,
+            retry_enter_delay_ms: crate::cli::DEFAULT_RETRY_ENTER_DELAY_MS,
+            shell: None,
+            command: vec!["codex".into()],
+        };
+        let repo_name = repo
+            .path()
+            .file_name()
+            .and_then(|value| value.to_str())
+            .expect("repo name")
+            .to_string();
+        let config = AppConfig {
+            defaults: DefaultsConfig {
+                channel: Some("default".into()),
+                format: crate::events::MessageFormat::Compact,
+            },
+            routes: vec![
+                RouteRule {
+                    event: "tmux.*".into(),
+                    filter: BTreeMap::from([("session".into(), "clawhip-*".into())]),
+                    sink: "discord".into(),
+                    channel: Some("heuristic-route".into()),
+                    ..RouteRule::default()
+                },
+                RouteRule {
+                    event: "session.*".into(),
+                    filter: BTreeMap::from([("repo_name".into(), repo_name)]),
+                    sink: "discord".into(),
+                    channel: Some("metadata-route".into()),
+                    ..RouteRule::default()
+                },
+            ],
+            ..AppConfig::default()
+        };
+
+        let monitor_args = TmuxMonitorArgs::from_new_args(&args, &config);
+
+        assert_eq!(monitor_args.channel.as_deref(), Some("metadata-route"));
+        assert_eq!(
+            monitor_args.routing.worktree_path.as_deref(),
+            Some(repo.path().to_string_lossy().as_ref())
+        );
+        assert!(monitor_args.routing.repo_name.is_some());
     }
 
     #[test]
