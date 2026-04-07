@@ -7,14 +7,11 @@ use crate::config::AppConfig;
 use crate::tmux_wrapper;
 
 /// Default keywords monitored for OMC sessions.
-const DEFAULT_OMC_KEYWORDS: &[&str] = &[
-    "error",
-    "Error",
-    "FAILED",
-    "PR created",
-    "panic",
-    "complete",
-];
+///
+/// Disabled by default because wrapper/bootstrap text can create more alert noise
+/// than signal during normal native launches. Operators can still opt in via
+/// explicit --keywords or CLAWHIP_OMC_KEYWORDS.
+const DEFAULT_OMC_KEYWORDS: &[&str] = &[];
 
 /// Default stale timeout in minutes for OMC sessions.
 const DEFAULT_OMC_STALE_MINUTES: u64 = 30;
@@ -99,35 +96,21 @@ pub async fn run(args: OmcArgs, config: &AppConfig) -> Result<()> {
 
 /// Deliver a prompt to a tmux session via send-keys.
 async fn deliver_prompt(session: &str, prompt: &str) -> Result<()> {
-    use crate::source::tmux::tmux_bin;
-    use tokio::process::Command;
+    use crate::hooks::prompt_deliver::{PromptDeliverConfig, deliver, derive_verify_keywords};
 
-    let literal_output = Command::new(tmux_bin())
-        .arg("send-keys")
-        .arg("-t")
-        .arg(session)
-        .arg("-l")
-        .arg(prompt)
-        .output()
-        .await?;
-    if !literal_output.status.success() {
-        let stderr = String::from_utf8_lossy(&literal_output.stderr);
-        return Err(format!("tmux send-keys failed: {}", stderr.trim()).into());
+    let mut config = PromptDeliverConfig::new(session.to_string(), prompt.to_string());
+    config.verify_keywords = derive_verify_keywords(prompt);
+
+    let result = deliver(&config).await?;
+    if !result.verified {
+        return Err(format!("prompt delivery to '{session}' was not verified").into());
     }
 
-    let enter_output = Command::new(tmux_bin())
-        .arg("send-keys")
-        .arg("-t")
-        .arg(session)
-        .arg("Enter")
-        .output()
-        .await?;
-    if !enter_output.status.success() {
-        let stderr = String::from_utf8_lossy(&enter_output.stderr);
-        return Err(format!("tmux send-keys Enter failed: {}", stderr.trim()).into());
-    }
-
-    eprintln!("clawhip omc: prompt delivered to {session}");
+    eprintln!(
+        "clawhip omc: prompt delivered to {session} (attempts={}, verified_keywords={})",
+        result.attempts,
+        config.verify_keywords.len()
+    );
     Ok(())
 }
 

@@ -11,6 +11,17 @@ const DEFAULT_TUI_TIMEOUT: Duration = Duration::from_secs(30);
 const DEFAULT_POLL_INTERVAL: Duration = Duration::from_millis(500);
 const DEFAULT_VERIFY_DELAY: Duration = Duration::from_millis(250);
 const PROMPT_CHARS: &[char] = &['$', '%', '>', '#', '❯', '›'];
+const MAX_VERIFY_KEYWORDS: usize = 6;
+const GENERIC_FALLBACK_PATTERNS: &[&str] = &[
+    "implement {feature}",
+    "summarize recent commits",
+    "explain this codebase",
+];
+const VERIFY_STOPWORDS: &[&str] = &[
+    "a", "an", "and", "the", "this", "that", "these", "those", "for", "from", "with", "into",
+    "about", "your", "you", "please", "task", "tasks", "issue", "issues", "review", "reviews",
+    "session", "sessions", "native", "clawhip", "omx", "omc", "fix", "now",
+];
 
 /// Configuration for prompt delivery to a tmux session.
 #[derive(Debug, Clone)]
@@ -88,21 +99,23 @@ async fn try_deliver(config: &PromptDeliverConfig, attempt: u32) -> Result<Deliv
 
     sleep(config.verify_delay).await;
 
-    let post_hash = capture_pane_hash(&config.session).await?;
+    let pane_content = capture_recent_pane(&config.session).await?;
+    let post_hash = content_hash(&pane_content);
     let content_changed = post_hash != pre_hash;
-
-    let keyword_verified = if config.verify_keywords.is_empty() {
-        true
-    } else {
-        verify_keywords(&config.session, &config.verify_keywords).await?
-    };
-
-    let verified = content_changed && keyword_verified;
+    let verified = content_changed
+        && verify_prompt_against_content(&config.prompt, &pane_content, &config.verify_keywords);
 
     if !content_changed {
         return Err(
             format!("attempt {attempt}: pane content unchanged after sending prompt").into(),
         );
+    }
+
+    if !verified {
+        return Err(format!(
+            "attempt {attempt}: pane content changed but did not reflect the requested task"
+        )
+        .into());
     }
 
     Ok(DeliveryResult {
@@ -163,6 +176,10 @@ async fn capture_last_line(session: &str) -> Result<String> {
 }
 
 async fn capture_pane_hash(session: &str) -> Result<u64> {
+    Ok(content_hash(&capture_recent_pane(session).await?))
+}
+
+async fn capture_recent_pane(session: &str) -> Result<String> {
     let output = Command::new(tmux_bin())
         .arg("capture-pane")
         .arg("-p")
@@ -175,7 +192,7 @@ async fn capture_pane_hash(session: &str) -> Result<u64> {
     if !output.status.success() {
         return Err(tmux_stderr(&output.stderr).into());
     }
-    Ok(content_hash(&String::from_utf8(output.stdout)?))
+    Ok(String::from_utf8(output.stdout)?)
 }
 
 async fn send_literal_keys(session: &str, text: &str) -> Result<()> {
@@ -207,22 +224,66 @@ async fn send_key(session: &str, key: &str) -> Result<()> {
     Ok(())
 }
 
-/// Check whether any of the verify keywords appear in the current pane content.
-async fn verify_keywords(session: &str, keywords: &[String]) -> Result<bool> {
-    let output = Command::new(tmux_bin())
-        .arg("capture-pane")
-        .arg("-p")
-        .arg("-t")
-        .arg(session)
-        .arg("-S")
-        .arg("-50")
-        .output()
-        .await?;
-    if !output.status.success() {
-        return Err(tmux_stderr(&output.stderr).into());
+pub fn derive_verify_keywords(prompt: &str) -> Vec<String> {
+    let mut keywords = Vec::new();
+
+    for token in prompt
+        .split(|ch: char| !ch.is_ascii_alphanumeric())
+        .filter(|token| !token.is_empty())
+        .map(|token| token.to_ascii_lowercase())
+    {
+        if VERIFY_STOPWORDS.contains(&token.as_str()) {
+            continue;
+        }
+        let is_numeric = token.chars().all(|ch| ch.is_ascii_digit());
+        if !(token.len() >= 4 || (is_numeric && token.len() >= 3)) {
+            continue;
+        }
+        if !keywords.contains(&token) {
+            keywords.push(token);
+        }
+        if keywords.len() >= MAX_VERIFY_KEYWORDS {
+            break;
+        }
     }
-    let content = String::from_utf8_lossy(&output.stdout);
-    Ok(keywords.iter().any(|kw| content.contains(kw.as_str())))
+
+    keywords
+}
+
+fn verify_prompt_against_content(prompt: &str, content: &str, verify_keywords: &[String]) -> bool {
+    if looks_like_generic_fallback(content) {
+        return false;
+    }
+
+    let effective_keywords = if verify_keywords.is_empty() {
+        derive_verify_keywords(prompt)
+    } else {
+        verify_keywords.to_vec()
+    };
+
+    if effective_keywords.is_empty() {
+        return true;
+    }
+
+    content_matches_keywords(content, &effective_keywords)
+}
+
+fn looks_like_generic_fallback(content: &str) -> bool {
+    let normalized = content.to_ascii_lowercase();
+    GENERIC_FALLBACK_PATTERNS
+        .iter()
+        .any(|pattern| normalized.contains(pattern))
+}
+
+fn content_matches_keywords(content: &str, keywords: &[String]) -> bool {
+    let normalized = content.to_ascii_lowercase();
+    let required_matches = keywords.len().min(2);
+    keywords
+        .iter()
+        .filter(|keyword| normalized.contains(keyword.as_str()))
+        .take(required_matches)
+        .count()
+        >= required_matches.max(1)
 }
 
 fn tmux_stderr(stderr: &[u8]) -> String {
@@ -269,5 +330,51 @@ mod tests {
         assert!(PROMPT_CHARS.contains(&'#'));
         assert!(PROMPT_CHARS.contains(&'❯'));
         assert!(PROMPT_CHARS.contains(&'›'));
+    }
+
+    #[test]
+    fn derive_verify_keywords_prefers_specific_task_terms() {
+        let keywords = derive_verify_keywords(
+            "Fix issue #166 now with minimal mergeable scope focused on live operational recovery",
+        );
+
+        assert_eq!(
+            keywords,
+            vec![
+                "166".to_string(),
+                "minimal".to_string(),
+                "mergeable".to_string(),
+                "scope".to_string(),
+                "focused".to_string(),
+                "live".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn verify_prompt_against_content_rejects_generic_fallbacks() {
+        let prompt =
+            "Fix issue #166 now with minimal mergeable scope focused on live operational recovery";
+        let content = "Implement {feature}\nSummarize recent commits\nExplain this codebase";
+
+        assert!(!verify_prompt_against_content(prompt, content, &[]));
+    }
+
+    #[test]
+    fn verify_prompt_against_content_requires_multiple_keyword_matches_when_available() {
+        let keywords = derive_verify_keywords(
+            "Fix issue #166 now with minimal mergeable scope focused on live operational recovery",
+        );
+
+        assert!(verify_prompt_against_content(
+            "",
+            "Working task: issue 166 live operational recovery is in progress",
+            &keywords,
+        ));
+        assert!(!verify_prompt_against_content(
+            "",
+            "Working task: issue 166",
+            &keywords,
+        ));
     }
 }

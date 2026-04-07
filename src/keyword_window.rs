@@ -1,6 +1,17 @@
 use std::collections::HashSet;
 use std::time::{Duration, Instant};
 
+const LAUNCHER_NOISE_PATTERNS: &[&str] = &[
+    "clawhip emit agent.started",
+    "clawhip emit agent.finished",
+    "clawhip emit agent.failed",
+    "function else>",
+    "registered_at=",
+    "parent_pid=",
+    "parent_name=",
+    "--error \"exit $exit_code\"",
+];
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct KeywordHit {
     pub keyword: String,
@@ -77,9 +88,9 @@ pub fn collect_keyword_hits(previous: &str, current: &str, keywords: &[String]) 
 
 fn should_ignore_launcher_line(line: &str) -> bool {
     let trimmed = line.trim();
-    trimmed.contains("clawhip emit agent.started")
-        || trimmed.contains("clawhip emit agent.finished")
-        || trimmed.contains("clawhip emit agent.failed")
+    LAUNCHER_NOISE_PATTERNS
+        .iter()
+        .any(|pattern| trimmed.contains(pattern))
 }
 
 fn appended_lines<'a>(previous: &'a str, current: &'a str) -> Vec<&'a str> {
@@ -176,6 +187,40 @@ mod tests {
             vec![KeywordHit {
                 keyword: "error".into(),
                 line: "error: real failure".into(),
+            }]
+        );
+    }
+
+    #[test]
+    fn collect_keyword_hits_ignores_tmux_wrapper_audit_lines() {
+        let hits = collect_keyword_hits(
+            "boot",
+            "boot\nclawhip tmux cli-new start session=issue-166 channel=ops keywords=error mention=- stale_minutes=30 format=- registered_at=2026-04-07T09:58:00Z parent_pid=4242 parent_name=codex\nerror: real failure",
+            &["error".into()],
+        );
+
+        assert_eq!(
+            hits,
+            vec![KeywordHit {
+                keyword: "error".into(),
+                line: "error: real failure".into(),
+            }]
+        );
+    }
+
+    #[test]
+    fn collect_keyword_hits_ignores_wrapped_exit_error_boilerplate() {
+        let hits = collect_keyword_hits(
+            "boot",
+            "boot\n  --error \"exit $exit_code\" \\\nFAILED: actual application failure",
+            &["error".into(), "FAILED".into()],
+        );
+
+        assert_eq!(
+            hits,
+            vec![KeywordHit {
+                keyword: "FAILED".into(),
+                line: "FAILED: actual application failure".into(),
             }]
         );
     }
