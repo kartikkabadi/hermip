@@ -3,10 +3,12 @@ use std::path::Path;
 
 const DOCS_WITHOUT_LEGACY_SURFACES: &[&str] = &[
     "README.md",
+    "docs/canonical-contract-cleanup.md",
     "docs/native-event-contract.md",
     "docs/live-verification.md",
     "docs/event-contract-v1.md",
     "integrations/omx/README.md",
+    "skills/omc/SKILL.md",
     "skills/omx/SKILL.md",
 ];
 
