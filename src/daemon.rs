@@ -26,6 +26,7 @@ use crate::source::{
     GitHubSource, GitSource, RegisteredTmuxSession, SharedTmuxRegistry, Source, TmuxSource,
     WorkspaceSource, list_active_tmux_registrations,
 };
+use crate::update::{self, SharedPendingUpdate};
 
 const EVENT_QUEUE_CAPACITY: usize = 256;
 
@@ -35,6 +36,7 @@ struct AppState {
     port: u16,
     tx: mpsc::Sender<IncomingEvent>,
     tmux_registry: SharedTmuxRegistry,
+    pending_update: SharedPendingUpdate,
 }
 
 pub async fn run(
@@ -81,6 +83,16 @@ pub async fn run(
     spawn_source(WorkspaceSource::new(config.clone()), tx.clone());
     spawn_source(CronSource::new(config.clone(), cron_state_path), tx.clone());
 
+    let pending_update = update::new_shared_pending_update();
+    {
+        let config = config.clone();
+        let tx = tx.clone();
+        let pending = pending_update.clone();
+        tokio::spawn(async move {
+            update::run_checker(config, tx, pending).await;
+        });
+    }
+
     let app = AxumRouter::new()
         .route("/health", get(health))
         .route("/api/status", get(status))
@@ -91,7 +103,10 @@ pub async fn run(
         .route("/api/native/hook", post(post_native_hook))
         .route("/api/tmux/register", post(register_tmux))
         .route("/api/tmux", get(list_tmux))
-        .route("/github", post(post_github));
+        .route("/github", post(post_github))
+        .route("/api/update/status", get(update_status))
+        .route("/api/update/approve", post(approve_update))
+        .route("/api/update/dismiss", post(dismiss_update));
     let port = port_override.unwrap_or(config.daemon.port);
 
     let app = app.with_state(AppState {
@@ -99,6 +114,7 @@ pub async fn run(
         port,
         tx,
         tmux_registry,
+        pending_update,
     });
     let addr: SocketAddr = format!("{}:{}", config.daemon.bind_host, port).parse()?;
     let listener = tokio::net::TcpListener::bind(addr).await?;
@@ -411,6 +427,67 @@ async fn post_github(
     }
 }
 
+async fn update_status(State(state): State<AppState>) -> impl IntoResponse {
+    let pending = state.pending_update.read().await;
+    match pending.as_ref() {
+        Some(update) => (
+            StatusCode::OK,
+            Json(json!({
+                "pending": true,
+                "current_version": update.current_version,
+                "latest_version": update.latest_version,
+                "release_url": update.release_url,
+                "detected_at": update.detected_at,
+            })),
+        )
+            .into_response(),
+        None => (
+            StatusCode::OK,
+            Json(json!({
+                "pending": false,
+                "current_version": VERSION,
+            })),
+        )
+            .into_response(),
+    }
+}
+
+async fn approve_update(State(state): State<AppState>) -> impl IntoResponse {
+    match update::approve_update(&state.pending_update, &state.config, &state.tx).await {
+        Ok(update) => (
+            StatusCode::OK,
+            Json(json!({
+                "ok": true,
+                "updated_to": update.latest_version,
+            })),
+        )
+            .into_response(),
+        Err(error) => (
+            StatusCode::BAD_REQUEST,
+            Json(json!({"ok": false, "error": error.to_string()})),
+        )
+            .into_response(),
+    }
+}
+
+async fn dismiss_update(State(state): State<AppState>) -> impl IntoResponse {
+    match update::dismiss_update(&state.pending_update).await {
+        Ok(update) => (
+            StatusCode::OK,
+            Json(json!({
+                "ok": true,
+                "dismissed_version": update.latest_version,
+            })),
+        )
+            .into_response(),
+        Err(error) => (
+            StatusCode::BAD_REQUEST,
+            Json(json!({"ok": false, "error": error.to_string()})),
+        )
+            .into_response(),
+    }
+}
+
 async fn enqueue_event(tx: &mpsc::Sender<IncomingEvent>, event: IncomingEvent) -> Result<()> {
     tx.send(event)
         .await
@@ -422,7 +499,7 @@ mod tests {
     use super::*;
     use crate::config::AppConfig;
     use crate::config::{CronJob, CronJobKind};
-    use crate::events::MessageFormat;
+    use crate::events::{MessageFormat, RoutingMetadata};
     use crate::router::Router;
     use crate::sink::SinkTarget;
     use crate::source::tmux::{ParentProcessInfo, RegistrationSource};
@@ -532,6 +609,7 @@ mod tests {
             port: 25294,
             tx,
             tmux_registry: Arc::new(RwLock::new(HashMap::new())),
+            pending_update: update::new_shared_pending_update(),
         };
         let event = IncomingEvent::agent_started(
             "worker-1".into(),
@@ -572,6 +650,7 @@ mod tests {
             port: 25294,
             tx,
             tmux_registry: Arc::new(RwLock::new(HashMap::new())),
+            pending_update: update::new_shared_pending_update(),
         };
         let payload = json!({
             "provider": "codex",
@@ -610,6 +689,7 @@ mod tests {
             port: 25294,
             tx,
             tmux_registry: Arc::new(RwLock::new(HashMap::new())),
+            pending_update: update::new_shared_pending_update(),
         };
         let payload = json!({
             "provider": "claude-code",
@@ -642,6 +722,7 @@ mod tests {
                 session: "issue-105".into(),
                 channel: Some("alerts".into()),
                 mention: Some("<@123>".into()),
+                routing: RoutingMetadata::default(),
                 keywords: vec!["error".into()],
                 keyword_window_secs: 30,
                 stale_minutes: 15,
@@ -660,6 +741,7 @@ mod tests {
             port: 25294,
             tx,
             tmux_registry: registry,
+            pending_update: update::new_shared_pending_update(),
         };
 
         let response = list_tmux(State(state)).await.into_response();
@@ -683,5 +765,127 @@ mod tests {
             registrations[0]["parent_process"]["name"],
             Value::from("codex")
         );
+    }
+
+    #[tokio::test]
+    async fn update_status_returns_no_pending_when_empty() {
+        let (tx, _rx) = mpsc::channel(1);
+        let state = AppState {
+            config: Arc::new(AppConfig::default()),
+            port: 25294,
+            tx,
+            tmux_registry: Arc::new(RwLock::new(HashMap::new())),
+            pending_update: update::new_shared_pending_update(),
+        };
+
+        let response = update_status(State(state)).await.into_response();
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let json: Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(json["pending"], Value::Bool(false));
+        assert_eq!(json["current_version"], Value::String(VERSION.to_string()));
+    }
+
+    #[tokio::test]
+    async fn update_status_returns_pending_when_set() {
+        let (tx, _rx) = mpsc::channel(1);
+        let pending = update::new_shared_pending_update();
+        *pending.write().await = Some(update::PendingUpdate {
+            current_version: "0.5.4".into(),
+            latest_version: "0.6.0".into(),
+            release_url: "https://github.com/Yeachan-Heo/clawhip/releases/tag/v0.6.0".into(),
+            detected_at: "2026-04-07T00:00:00Z".into(),
+        });
+
+        let state = AppState {
+            config: Arc::new(AppConfig::default()),
+            port: 25294,
+            tx,
+            tmux_registry: Arc::new(RwLock::new(HashMap::new())),
+            pending_update: pending,
+        };
+
+        let response = update_status(State(state)).await.into_response();
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let json: Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(json["pending"], Value::Bool(true));
+        assert_eq!(json["latest_version"], Value::from("0.6.0"));
+        assert_eq!(json["current_version"], Value::from("0.5.4"));
+    }
+
+    #[tokio::test]
+    async fn approve_returns_error_when_no_pending_update() {
+        let (tx, _rx) = mpsc::channel(1);
+        let state = AppState {
+            config: Arc::new(AppConfig::default()),
+            port: 25294,
+            tx,
+            tmux_registry: Arc::new(RwLock::new(HashMap::new())),
+            pending_update: update::new_shared_pending_update(),
+        };
+
+        let response = approve_update(State(state)).await.into_response();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+
+        let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let json: Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(json["ok"], Value::Bool(false));
+        assert!(
+            json["error"]
+                .as_str()
+                .unwrap()
+                .contains("no pending update")
+        );
+    }
+
+    #[tokio::test]
+    async fn dismiss_clears_pending_update() {
+        let (tx, _rx) = mpsc::channel(1);
+        let pending = update::new_shared_pending_update();
+        *pending.write().await = Some(update::PendingUpdate {
+            current_version: "0.5.4".into(),
+            latest_version: "0.6.0".into(),
+            release_url: "https://example.com".into(),
+            detected_at: "2026-04-07T00:00:00Z".into(),
+        });
+
+        let state = AppState {
+            config: Arc::new(AppConfig::default()),
+            port: 25294,
+            tx,
+            tmux_registry: Arc::new(RwLock::new(HashMap::new())),
+            pending_update: pending.clone(),
+        };
+
+        let response = dismiss_update(State(state)).await.into_response();
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let json: Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(json["ok"], Value::Bool(true));
+        assert_eq!(json["dismissed_version"], Value::from("0.6.0"));
+        assert!(pending.read().await.is_none());
+    }
+
+    #[tokio::test]
+    async fn dismiss_returns_error_when_no_pending_update() {
+        let (tx, _rx) = mpsc::channel(1);
+        let state = AppState {
+            config: Arc::new(AppConfig::default()),
+            port: 25294,
+            tx,
+            tmux_registry: Arc::new(RwLock::new(HashMap::new())),
+            pending_update: update::new_shared_pending_update(),
+        };
+
+        let response = dismiss_update(State(state)).await.into_response();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+
+        let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let json: Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(json["ok"], Value::Bool(false));
     }
 }
