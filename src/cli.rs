@@ -300,8 +300,6 @@ pub enum PluginCommands {
 pub enum NativeCommands {
     /// Forward a provider-native hook payload to clawhip.
     Hook(NativeHookArgs),
-    /// Install provider-native Codex and/or Claude hook configuration.
-    Install(NativeInstallArgs),
 }
 
 #[derive(Debug, Clone, Args)]
@@ -880,6 +878,31 @@ mod tests {
     }
 
     #[test]
+    fn parses_native_hook_subcommand() {
+        let cli = Cli::parse_from([
+            "clawhip",
+            "native",
+            "hook",
+            "--provider",
+            "codex",
+            "--file",
+            "payload.json",
+        ]);
+
+        let Commands::Native { command } = cli.command.expect("native command") else {
+            panic!("expected native command");
+        };
+
+        let NativeCommands::Hook(args) = command;
+
+        assert_eq!(args.provider.as_deref(), Some("codex"));
+        assert_eq!(
+            args.file.as_deref(),
+            Some(PathBuf::from("payload.json").as_path())
+        );
+    }
+
+    #[test]
     fn parses_cron_run_subcommand() {
         let cli = Cli::parse_from(["clawhip", "cron", "run", "dev-followup"]);
 
@@ -892,37 +915,12 @@ mod tests {
     }
 
     #[test]
-    fn parses_native_install_subcommand() {
-        let cli = Cli::parse_from([
-            "clawhip",
-            "native",
-            "install",
-            "--provider",
-            "claude",
-            "--scope",
-            "global",
-        ]);
-
-        let Commands::Native { command } = cli.command.expect("native command") else {
-            panic!("expected native command");
-        };
-
-        let NativeCommands::Install(args) = command else {
-            panic!("expected native install command");
-        };
-
-        assert_eq!(args.provider, crate::native_hooks::NativeProvider::Claude);
-        assert_eq!(args.scope, crate::native_hooks::NativeInstallScope::Global);
-        assert_eq!(args.root, None);
-    }
-
-    #[test]
     fn native_hook_args_read_payload_from_inline_json() {
         let args = NativeHookArgs {
-            payload: Some(r#"{"event_name":"SessionStart","provider":"codex"}"#.into()),
-            file: None,
             provider: None,
             source: None,
+            payload: Some(r#"{"event_name":"SessionStart"}"#.into()),
+            file: None,
         };
 
         let payload = args
@@ -930,16 +928,15 @@ mod tests {
             .expect("inline json payload");
 
         assert_eq!(payload["event_name"], serde_json::json!("SessionStart"));
-        assert_eq!(payload["provider"], serde_json::json!("codex"));
     }
 
     #[test]
     fn native_hook_args_reject_empty_input() {
         let args = NativeHookArgs {
-            payload: None,
-            file: None,
             provider: None,
             source: None,
+            payload: None,
+            file: None,
         };
 
         let error = args
@@ -1034,27 +1031,71 @@ mod tests {
     }
 
     #[test]
-    fn parses_native_install_with_root_override() {
+    fn parses_hooks_install_subcommand() {
         let cli = Cli::parse_from([
             "clawhip",
-            "native",
+            "hooks",
             "install",
             "--provider",
             "codex",
+            "--provider",
+            "claude-code",
+            "--scope",
+            "project",
             "--root",
             "/tmp/repo",
         ]);
 
-        let Commands::Native { command } = cli.command.expect("native command") else {
-            panic!("expected native command");
+        let Commands::Hooks { command } = cli.command.expect("hooks command") else {
+            panic!("expected hooks command");
         };
 
-        let NativeCommands::Install(args) = command else {
-            panic!("expected native install command");
-        };
+        let HooksCommands::Install(args) = command;
 
-        assert_eq!(args.provider, crate::native_hooks::NativeProvider::Codex);
-        assert_eq!(args.scope, crate::native_hooks::NativeInstallScope::Project);
+        assert_eq!(
+            args.provider,
+            vec![HookProvider::Codex, HookProvider::ClaudeCode]
+        );
+        assert_eq!(args.scope, HookInstallScope::Project);
         assert_eq!(args.root, Some(PathBuf::from("/tmp/repo")));
+        assert!(!args.all);
+    }
+
+    #[test]
+    fn parses_hooks_install_all_flag() {
+        let cli = Cli::parse_from(["clawhip", "hooks", "install", "--all"]);
+
+        let Commands::Hooks { command } = cli.command.expect("hooks command") else {
+            panic!("expected hooks command");
+        };
+
+        let HooksCommands::Install(args) = command;
+
+        assert!(args.provider.is_empty());
+        assert!(args.all);
+    }
+
+    #[test]
+    fn parses_hooks_install_with_global_scope_and_force() {
+        let cli = Cli::parse_from([
+            "clawhip",
+            "hooks",
+            "install",
+            "--provider",
+            "claude",
+            "--scope",
+            "global",
+            "--force",
+        ]);
+
+        let Commands::Hooks { command } = cli.command.expect("hooks command") else {
+            panic!("expected hooks command");
+        };
+
+        let HooksCommands::Install(args) = command;
+
+        assert_eq!(args.provider, vec![HookProvider::ClaudeCode]);
+        assert_eq!(args.scope, HookInstallScope::Global);
+        assert!(args.force);
     }
 }

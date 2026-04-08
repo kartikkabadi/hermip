@@ -9,6 +9,7 @@ mod dispatch;
 mod dynamic_tokens;
 mod event;
 mod events;
+mod hooks;
 mod keyword_window;
 mod lifecycle;
 mod memory;
