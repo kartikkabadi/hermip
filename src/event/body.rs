@@ -64,6 +64,17 @@ pub struct GitHubCIEvent {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GitHubReleaseEvent {
+    pub repo: String,
+    pub tag: String,
+    pub name: String,
+    pub action: String,
+    pub is_prerelease: bool,
+    pub url: String,
+    pub actor: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TmuxKeywordEvent {
     pub session: String,
     pub keyword: String,
@@ -100,6 +111,12 @@ pub struct AgentEvent {
     pub pr_url: Option<String>,
     pub command: Option<String>,
     pub tool_name: Option<String>,
+    pub tmux_session: Option<String>,
+    pub tmux_window: Option<String>,
+    pub tmux_pane: Option<String>,
+    pub tmux_pane_tty: Option<String>,
+    pub tmux_attached: Option<bool>,
+    pub tmux_client_count: Option<u64>,
     pub elapsed_secs: Option<u64>,
     pub summary: Option<String>,
     pub error_summary: Option<String>,

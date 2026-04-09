@@ -12,7 +12,7 @@ use tokio::time::sleep;
 use crate::Result;
 use crate::client::DaemonClient;
 use crate::config::{AppConfig, TmuxSessionMonitor};
-use crate::events::{IncomingEvent, MessageFormat};
+use crate::events::{IncomingEvent, MessageFormat, RoutingMetadata};
 use crate::keyword_window::{PendingKeywordHits, collect_keyword_hits};
 use crate::router::glob_match;
 use crate::source::Source;
@@ -50,6 +50,8 @@ pub struct RegisteredTmuxSession {
     pub channel: Option<String>,
     pub mention: Option<String>,
     #[serde(default)]
+    pub routing: RoutingMetadata,
+    #[serde(default)]
     pub keywords: Vec<String>,
     #[serde(default = "default_keyword_window_secs")]
     pub keyword_window_secs: u64,
@@ -71,6 +73,7 @@ impl From<&TmuxSessionMonitor> for RegisteredTmuxSession {
             session: value.session.clone(),
             channel: value.channel.clone(),
             mention: value.mention.clone(),
+            routing: RoutingMetadata::default(),
             keywords: value.keywords.clone(),
             keyword_window_secs: value.keyword_window_secs,
             stale_minutes: value.stale_minutes,
@@ -141,6 +144,7 @@ struct TmuxPaneState {
     content_hash: u64,
     last_change: Instant,
     last_stale_notification: Option<Instant>,
+    pane_dead: bool,
 }
 
 #[derive(Default)]
@@ -154,6 +158,7 @@ struct TmuxPaneSnapshot {
     session: String,
     pane_name: String,
     content: String,
+    pane_dead: bool,
 }
 
 pub async fn monitor_registered_session(
@@ -211,10 +216,12 @@ pub async fn monitor_registered_session(
                             snapshot: pane.content,
                             last_change: now,
                             last_stale_notification: None,
+                            pane_dead: pane.pane_dead,
                         },
                     );
                 }
                 Some(existing) => {
+                    existing.pane_dead = pane.pane_dead;
                     if existing.content_hash != hash {
                         let hits = collect_keyword_hits(
                             &existing.snapshot,
@@ -363,11 +370,13 @@ async fn poll_tmux(
                                     content_hash: hash,
                                     last_change: now,
                                     last_stale_notification: None,
+                                    pane_dead: pane.pane_dead,
                                 },
                             );
                             None
                         }
                         Some(existing) => {
+                            existing.pane_dead = pane.pane_dead;
                             if existing.content_hash != hash {
                                 let hits = collect_keyword_hits(
                                     &existing.snapshot,
@@ -587,7 +596,7 @@ fn insert_resolved_session(
 }
 
 fn should_emit_stale(pane: &TmuxPaneState, now: Instant, stale_minutes: u64) -> bool {
-    if stale_minutes == 0 {
+    if stale_minutes == 0 || pane.pane_dead {
         return false;
     }
     let stale_after = Duration::from_secs(stale_minutes * 60);
@@ -620,6 +629,7 @@ fn tmux_keyword_event(
     };
 
     event
+        .with_routing_metadata(&registration.routing)
         .with_mention(registration.mention.clone())
         .with_format(registration.format.clone())
 }
@@ -637,6 +647,7 @@ fn tmux_stale_event(
         last_line,
         registration.channel.clone(),
     )
+    .with_routing_metadata(&registration.routing)
     .with_mention(registration.mention.clone())
     .with_format(registration.format.clone())
 }
@@ -765,7 +776,7 @@ async fn snapshot_tmux_session(session: &str) -> Result<Vec<TmuxPaneSnapshot>> {
         .arg("-t")
         .arg(session)
         .arg("-F")
-        .arg("#{pane_id}|#{session_name}|#{window_index}.#{pane_index}|#{pane_title}")
+        .arg("#{pane_id}|#{session_name}|#{window_index}.#{pane_index}|#{pane_dead}|#{pane_title}")
         .output()
         .await?;
     if !output.status.success() {
@@ -774,13 +785,14 @@ async fn snapshot_tmux_session(session: &str) -> Result<Vec<TmuxPaneSnapshot>> {
 
     let mut panes = Vec::new();
     for line in String::from_utf8(output.stdout)?.lines() {
-        let mut parts = line.splitn(4, '|');
+        let mut parts = line.splitn(5, '|');
         let pane_id = parts.next().unwrap_or_default().to_string();
         if pane_id.is_empty() {
             continue;
         }
         let session_name = parts.next().unwrap_or_default().to_string();
         let pane_name = parts.next().unwrap_or_default().to_string();
+        let pane_dead = parts.next().unwrap_or_default() == "1";
         let capture = Command::new(tmux_bin())
             .arg("capture-pane")
             .arg("-p")
@@ -798,6 +810,7 @@ async fn snapshot_tmux_session(session: &str) -> Result<Vec<TmuxPaneSnapshot>> {
             session: session_name,
             pane_name,
             content: String::from_utf8(capture.stdout)?,
+            pane_dead,
         });
     }
     Ok(panes)
@@ -848,6 +861,7 @@ mod tests {
             session: "issue-24".into(),
             channel: Some("alerts".into()),
             mention: Some("<@123>".into()),
+            routing: RoutingMetadata::default(),
             keywords: keywords.into_iter().map(str::to_string).collect(),
             keyword_window_secs: 30,
             stale_minutes: 15,
@@ -893,6 +907,30 @@ PR created #7",
         assert_eq!(event.payload["keyword"], "error");
         assert_eq!(event.payload["line"], "boom");
         assert_eq!(event.payload["hit_count"], serde_json::Value::Null);
+    }
+
+    #[test]
+    fn tmux_keyword_event_carries_registered_routing_metadata() {
+        let mut registration = registration(vec!["error"]);
+        registration.routing = RoutingMetadata {
+            project: Some("clawhip".into()),
+            repo_name: Some("clawhip".into()),
+            worktree_path: Some("/repo/clawhip.worktrees/issue-152".into()),
+            ..RoutingMetadata::default()
+        };
+
+        let event = tmux_keyword_event(
+            &registration,
+            "clawhip-issue-152".into(),
+            vec![("error".into(), "boom".into())],
+        );
+
+        assert_eq!(event.payload["project"], "clawhip");
+        assert_eq!(event.payload["repo_name"], "clawhip");
+        assert_eq!(
+            event.payload["worktree_path"],
+            "/repo/clawhip.worktrees/issue-152"
+        );
     }
 
     #[test]
@@ -971,6 +1009,7 @@ PR created #7",
                     session: "issue-105".into(),
                     channel: Some("alerts".into()),
                     mention: None,
+                    routing: RoutingMetadata::default(),
                     keywords: vec!["error".into()],
                     keyword_window_secs: 30,
                     stale_minutes: 10,
@@ -987,6 +1026,7 @@ PR created #7",
                     session: "wrapper".into(),
                     channel: Some("alerts".into()),
                     mention: None,
+                    routing: RoutingMetadata::default(),
                     keywords: vec!["panic".into()],
                     keyword_window_secs: 30,
                     stale_minutes: 10,
@@ -1006,6 +1046,7 @@ PR created #7",
                     session: "stale-config".into(),
                     channel: Some("alerts".into()),
                     mention: None,
+                    routing: RoutingMetadata::default(),
                     keywords: vec!["panic".into()],
                     keyword_window_secs: 30,
                     stale_minutes: 10,
@@ -1026,6 +1067,7 @@ PR created #7",
                     session: "issue-105".into(),
                     channel: Some("alerts".into()),
                     mention: None,
+                    routing: RoutingMetadata::default(),
                     keywords: vec!["error".into(), "complete".into()],
                     keyword_window_secs: 30,
                     stale_minutes: 10,
@@ -1073,6 +1115,7 @@ PR created #7",
         let registration = RegisteredTmuxSession {
             format: Some(MessageFormat::Compact),
             mention: None,
+            routing: RoutingMetadata::default(),
             ..registration(vec!["error", "complete"])
         };
         let start = Instant::now();
@@ -1120,6 +1163,7 @@ PR created #7",
         let registration = RegisteredTmuxSession {
             format: Some(MessageFormat::Compact),
             mention: None,
+            routing: RoutingMetadata::default(),
             ..registration(vec!["error", "complete"])
         };
         let start = Instant::now();
@@ -1153,6 +1197,7 @@ PR created #7",
         let registration = RegisteredTmuxSession {
             format: Some(MessageFormat::Compact),
             mention: None,
+            routing: RoutingMetadata::default(),
             ..registration(vec!["error"])
         };
         let start = Instant::now();
@@ -1216,6 +1261,7 @@ error: failed";
         let registration = RegisteredTmuxSession {
             format: Some(MessageFormat::Compact),
             mention: None,
+            routing: RoutingMetadata::default(),
             ..registration(vec!["error", "complete"])
         };
         let start = Instant::now();
@@ -1274,6 +1320,7 @@ error: failed";
         let registration = RegisteredTmuxSession {
             format: Some(MessageFormat::Compact),
             mention: None,
+            routing: RoutingMetadata::default(),
             ..registration(vec!["error"])
         };
         let start = Instant::now();
@@ -1330,6 +1377,7 @@ error: failed";
                 session: "rcc-*".into(),
                 channel: Some("alerts".into()),
                 mention: None,
+                routing: RoutingMetadata::default(),
                 keywords: vec!["panic".into()],
                 keyword_window_secs: 30,
                 stale_minutes: 10,
@@ -1359,6 +1407,7 @@ error: failed";
                     session: "rcc-*".into(),
                     channel: Some("rcc-alerts".into()),
                     mention: None,
+                    routing: RoutingMetadata::default(),
                     keywords: vec!["panic".into()],
                     keyword_window_secs: 30,
                     stale_minutes: 10,
@@ -1372,6 +1421,7 @@ error: failed";
                     session: "omx-*".into(),
                     channel: Some("omx-alerts".into()),
                     mention: None,
+                    routing: RoutingMetadata::default(),
                     keywords: vec!["error".into()],
                     keyword_window_secs: 30,
                     stale_minutes: 10,
@@ -1399,6 +1449,7 @@ error: failed";
                     session: "exact-session".into(),
                     channel: Some("alerts".into()),
                     mention: None,
+                    routing: RoutingMetadata::default(),
                     keywords: vec!["panic".into()],
                     keyword_window_secs: 30,
                     stale_minutes: 10,
@@ -1412,6 +1463,7 @@ error: failed";
                     session: "rcc-*".into(),
                     channel: Some("alerts".into()),
                     mention: None,
+                    routing: RoutingMetadata::default(),
                     keywords: vec!["panic".into()],
                     keyword_window_secs: 30,
                     stale_minutes: 10,
@@ -1438,6 +1490,7 @@ error: failed";
                     session: "*".into(),
                     channel: Some("default-alerts".into()),
                     mention: None,
+                    routing: RoutingMetadata::default(),
                     keywords: vec!["error".into()],
                     keyword_window_secs: 30,
                     stale_minutes: 10,
@@ -1451,6 +1504,7 @@ error: failed";
                     session: "rcc-api".into(),
                     channel: Some("rcc-alerts".into()),
                     mention: None,
+                    routing: RoutingMetadata::default(),
                     keywords: vec!["panic".into()],
                     keyword_window_secs: 30,
                     stale_minutes: 10,
@@ -1477,6 +1531,7 @@ error: failed";
                     session: "*".into(),
                     channel: Some("default-alerts".into()),
                     mention: None,
+                    routing: RoutingMetadata::default(),
                     keywords: vec!["error".into()],
                     keyword_window_secs: 30,
                     stale_minutes: 10,
@@ -1490,6 +1545,7 @@ error: failed";
                     session: "rcc-*".into(),
                     channel: Some("rcc-alerts".into()),
                     mention: None,
+                    routing: RoutingMetadata::default(),
                     keywords: vec!["panic".into()],
                     keyword_window_secs: 30,
                     stale_minutes: 10,
@@ -1521,6 +1577,7 @@ error: failed";
                     session: "*abc*".into(),
                     channel: Some("broad-alerts".into()),
                     mention: None,
+                    routing: RoutingMetadata::default(),
                     keywords: vec!["error".into()],
                     keyword_window_secs: 30,
                     stale_minutes: 10,
@@ -1534,6 +1591,7 @@ error: failed";
                     session: "abc*".into(),
                     channel: Some("specific-alerts".into()),
                     mention: None,
+                    routing: RoutingMetadata::default(),
                     keywords: vec!["panic".into()],
                     keyword_window_secs: 30,
                     stale_minutes: 10,
@@ -1563,6 +1621,7 @@ error: failed";
             content_hash: 0,
             last_change: Instant::now() - Duration::from_secs(3600),
             last_stale_notification: None,
+            pane_dead: false,
         };
         // stale_minutes=0 should never emit, even after 1 hour idle
         assert!(!should_emit_stale(&pane, Instant::now(), 0));
@@ -1577,8 +1636,24 @@ error: failed";
             content_hash: 0,
             last_change: Instant::now() - Duration::from_secs(3600),
             last_stale_notification: None,
+            pane_dead: false,
         };
         // stale_minutes=1 should emit after 1 hour idle
         assert!(should_emit_stale(&pane, Instant::now(), 1));
+    }
+
+    #[test]
+    fn pane_dead_suppresses_stale_alert() {
+        let pane = TmuxPaneState {
+            session: "test".into(),
+            pane_name: "0.0".into(),
+            snapshot: String::new(),
+            content_hash: 0,
+            last_change: Instant::now() - Duration::from_secs(3600),
+            last_stale_notification: None,
+            pane_dead: true,
+        };
+        // Dead pane should never emit stale, even after 1 hour idle
+        assert!(!should_emit_stale(&pane, Instant::now(), 1));
     }
 }

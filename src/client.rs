@@ -25,8 +25,8 @@ impl DaemonClient {
         self.post_json("/event", event).await.map(|_| ())
     }
 
-    pub async fn send_omx_hook(&self, envelope: &Value) -> Result<Value> {
-        self.post_json("/api/omx/hook", envelope).await
+    pub async fn send_native_hook(&self, envelope: &Value) -> Result<Value> {
+        self.post_json("/api/native/hook", envelope).await
     }
 
     pub async fn register_tmux(&self, registration: &RegisteredTmuxSession) -> Result<()> {
@@ -62,6 +62,37 @@ impl DaemonClient {
             let status = response.status();
             let body = response.text().await.unwrap_or_default();
             Err(format!("daemon health check failed with {status}: {body}").into())
+        }
+    }
+
+    pub async fn get_update_status(&self) -> Result<Value> {
+        let response = self
+            .http
+            .get(format!("{}/api/update/status", self.base_url))
+            .send()
+            .await?;
+        if response.status().is_success() {
+            Ok(response.json().await?)
+        } else {
+            let status = response.status();
+            let body = response.text().await.unwrap_or_default();
+            Err(format!("daemon update status failed with {status}: {body}").into())
+        }
+    }
+
+    pub async fn post_update_action(&self, action: &str) -> Result<Value> {
+        let response = self
+            .http
+            .post(format!("{}/api/update/{action}", self.base_url))
+            .json(&serde_json::json!({}))
+            .send()
+            .await?;
+        if response.status().is_success() {
+            Ok(response.json().await?)
+        } else {
+            let status = response.status();
+            let body = response.text().await.unwrap_or_default();
+            Err(format!("daemon update {action} failed with {status}: {body}").into())
         }
     }
 

@@ -57,6 +57,24 @@ pub struct IncomingEvent {
     pub payload: Value,
 }
 
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct RoutingMetadata {
+    #[serde(default)]
+    pub tool: Option<String>,
+    #[serde(default)]
+    pub project: Option<String>,
+    #[serde(default)]
+    pub repo_name: Option<String>,
+    #[serde(default)]
+    pub repo_path: Option<String>,
+    #[serde(default)]
+    pub worktree_path: Option<String>,
+    #[serde(default)]
+    pub session_id: Option<String>,
+    #[serde(default)]
+    pub branch: Option<String>,
+}
+
 #[derive(Debug, Deserialize)]
 struct IncomingEventWire {
     #[serde(rename = "type", alias = "kind", alias = "event")]
@@ -464,6 +482,43 @@ impl IncomingEvent {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
+    pub fn github_release(
+        action: &str,
+        repo: String,
+        tag: String,
+        name: String,
+        is_prerelease: bool,
+        url: String,
+        actor: Option<String>,
+        channel: Option<String>,
+    ) -> Self {
+        let kind = match action {
+            "prereleased" => "github.release-prereleased",
+            "edited" => "github.release-edited",
+            _ => "github.release-published",
+        };
+        let mut payload = Map::new();
+        payload.insert("repo".to_string(), json!(repo));
+        payload.insert("tag".to_string(), json!(tag));
+        payload.insert("name".to_string(), json!(name));
+        payload.insert("action".to_string(), json!(action));
+        payload.insert("is_prerelease".to_string(), json!(is_prerelease));
+        payload.insert("url".to_string(), json!(url));
+        if let Some(actor) = actor {
+            payload.insert("actor".to_string(), json!(actor));
+        }
+
+        Self {
+            kind: kind.to_string(),
+            channel,
+            mention: None,
+            format: None,
+            template: None,
+            payload: Value::Object(payload),
+        }
+    }
+
     pub fn tmux_keyword(
         session: String,
         keyword: String,
@@ -576,6 +631,28 @@ impl IncomingEvent {
         self
     }
 
+    pub fn with_routing_metadata(mut self, routing: &RoutingMetadata) -> Self {
+        let Some(payload) = self.payload.as_object_mut() else {
+            return self;
+        };
+
+        for (key, value) in [
+            ("tool", routing.tool.as_deref()),
+            ("project", routing.project.as_deref()),
+            ("repo_name", routing.repo_name.as_deref()),
+            ("repo_path", routing.repo_path.as_deref()),
+            ("worktree_path", routing.worktree_path.as_deref()),
+            ("session_id", routing.session_id.as_deref()),
+            ("branch", routing.branch.as_deref()),
+        ] {
+            if let Some(value) = value.map(str::trim).filter(|value| !value.is_empty()) {
+                payload.insert(key.to_string(), json!(value));
+            }
+        }
+
+        self
+    }
+
     pub fn canonical_kind(&self) -> &str {
         match self.kind.as_str() {
             "issue-opened" => "github.issue-opened",
@@ -590,6 +667,10 @@ impl IncomingEvent {
             "test-finished" => "session.test-finished",
             "test-failed" => "session.test-failed",
             "handoff-needed" => "session.handoff-needed",
+            "prompt-submitted" => "session.prompt-submitted",
+            "prompt-delivered" => "session.prompt-delivered",
+            "prompt-delivery-failed" => "session.prompt-delivery-failed",
+            "stopped" => "session.stopped",
             other => other,
         }
     }
@@ -742,6 +823,19 @@ fn map_native_signal(raw: &str) -> Option<&'static str> {
         }
         "test-failed" | "session.test-failed" | "test.failed" => Some("session.test-failed"),
         "handoff-needed" | "session.handoff-needed" => Some("session.handoff-needed"),
+        "stop" | "stopped" | "session.stopped" => Some("session.stopped"),
+        "userpromptsubmit"
+        | "user-prompt-submit"
+        | "user-prompt-submitted"
+        | "prompt-submitted"
+        | "prompt.submitted"
+        | "session.prompt-submitted" => Some("session.prompt-submitted"),
+        "prompt-delivered" | "session.prompt-delivered" | "first-prompt-delivered" => {
+            Some("session.prompt-delivered")
+        }
+        "prompt-delivery-failed"
+        | "session.prompt-delivery-failed"
+        | "first-prompt-delivery-failed" => Some("session.prompt-delivery-failed"),
         _ => None,
     }
 }
@@ -891,6 +985,96 @@ fn normalize_native_metadata(payload: &mut Value, raw_kind: &str, canonical_kind
         &["/route_key", "/signal/routeKey", "/context/route_key"],
     );
     let source = first_string(payload, &["/source"]);
+    let tmux_session = first_string(
+        payload,
+        &[
+            "/tmux_session",
+            "/tmuxSession",
+            "/context/tmux_session",
+            "/context/tmuxSession",
+            "/tmux/session",
+            "/context/tmux/session",
+            "/payload/tmux_session",
+            "/payload/tmuxSession",
+            "/payload/tmux/session",
+        ],
+    );
+    let tmux_window = first_string(
+        payload,
+        &[
+            "/tmux_window",
+            "/tmuxWindow",
+            "/context/tmux_window",
+            "/context/tmuxWindow",
+            "/tmux/window",
+            "/context/tmux/window",
+            "/payload/tmux_window",
+            "/payload/tmuxWindow",
+            "/payload/tmux/window",
+        ],
+    );
+    let tmux_pane = first_string(
+        payload,
+        &[
+            "/tmux_pane",
+            "/tmuxPane",
+            "/context/tmux_pane",
+            "/context/tmuxPane",
+            "/tmux/pane",
+            "/context/tmux/pane",
+            "/payload/tmux_pane",
+            "/payload/tmuxPane",
+            "/payload/tmux/pane",
+        ],
+    );
+    let tmux_pane_tty = first_string(
+        payload,
+        &[
+            "/tmux_pane_tty",
+            "/tmuxPaneTty",
+            "/context/tmux_pane_tty",
+            "/context/tmuxPaneTty",
+            "/tmux/pane_tty",
+            "/tmux/paneTty",
+            "/context/tmux/pane_tty",
+            "/context/tmux/paneTty",
+            "/payload/tmux_pane_tty",
+            "/payload/tmuxPaneTty",
+            "/payload/tmux/pane_tty",
+            "/payload/tmux/paneTty",
+        ],
+    );
+    let tmux_attached = first_boolish(
+        payload,
+        &[
+            "/tmux_attached",
+            "/tmuxAttached",
+            "/context/tmux_attached",
+            "/context/tmuxAttached",
+            "/tmux/attached",
+            "/context/tmux/attached",
+            "/payload/tmux_attached",
+            "/payload/tmuxAttached",
+            "/payload/tmux/attached",
+        ],
+    );
+    let tmux_client_count = first_u64ish(
+        payload,
+        &[
+            "/tmux_client_count",
+            "/tmuxClientCount",
+            "/context/tmux_client_count",
+            "/context/tmuxClientCount",
+            "/tmux/client_count",
+            "/tmux/clientCount",
+            "/context/tmux/client_count",
+            "/context/tmux/clientCount",
+            "/payload/tmux_client_count",
+            "/payload/tmuxClientCount",
+            "/payload/tmux/client_count",
+            "/payload/tmux/clientCount",
+        ],
+    );
     let mut issue_number =
         first_u64(payload, &["/issue_number", "/context/issue_number"]).or_else(|| {
             [
@@ -959,12 +1143,19 @@ fn normalize_native_metadata(payload: &mut Value, raw_kind: &str, canonical_kind
     insert_string_if_missing(object, "tool_name", tool_name);
     insert_string_if_missing(object, "test_runner", test_runner);
     insert_u64_if_missing(object, "elapsed_secs", elapsed_secs);
-    insert_string_if_missing(object, "status", status);
+    insert_string_if_missing(object, "status", status.clone());
+    insert_string_if_missing(object, "normalized_event", status);
     insert_string_if_missing(object, "summary", summary);
     insert_string_if_missing(object, "error_message", error_message);
     insert_string_if_missing(object, "event_timestamp", event_timestamp);
     insert_string_if_missing(object, "route_key", route_key);
     insert_string_if_missing(object, "source", source);
+    insert_string_if_missing(object, "tmux_session", tmux_session);
+    insert_string_if_missing(object, "tmux_window", tmux_window);
+    insert_string_if_missing(object, "tmux_pane", tmux_pane);
+    insert_string_if_missing(object, "tmux_pane_tty", tmux_pane_tty);
+    insert_bool_if_missing(object, "tmux_attached", tmux_attached);
+    insert_u64_if_missing(object, "tmux_client_count", tmux_client_count);
 }
 
 fn now_rfc3339() -> String {
@@ -1034,6 +1225,10 @@ fn event_status_from_kind(kind: &str) -> Option<&'static str> {
         "session.test-finished" => Some("test-finished"),
         "session.test-failed" => Some("test-failed"),
         "session.handoff-needed" => Some("handoff-needed"),
+        "session.prompt-submitted" => Some("prompt-submitted"),
+        "session.prompt-delivered" => Some("prompt-delivered"),
+        "session.prompt-delivery-failed" => Some("prompt-delivery-failed"),
+        "session.stopped" => Some("stopped"),
         _ => None,
     }
 }
@@ -1055,6 +1250,33 @@ fn first_u64(payload: &Value, pointers: &[&str]) -> Option<u64> {
         .find_map(|pointer| payload.pointer(pointer).and_then(Value::as_u64))
 }
 
+fn first_boolish(payload: &Value, pointers: &[&str]) -> Option<bool> {
+    pointers.iter().find_map(|pointer| {
+        let value = payload.pointer(pointer)?;
+        match value {
+            Value::Bool(value) => Some(*value),
+            Value::Number(value) => value.as_u64().map(|number| number != 0),
+            Value::String(value) => match value.trim().to_ascii_lowercase().as_str() {
+                "1" | "true" | "yes" | "attached" => Some(true),
+                "0" | "false" | "no" | "detached" => Some(false),
+                _ => None,
+            },
+            _ => None,
+        }
+    })
+}
+
+fn first_u64ish(payload: &Value, pointers: &[&str]) -> Option<u64> {
+    pointers.iter().find_map(|pointer| {
+        let value = payload.pointer(pointer)?;
+        match value {
+            Value::Number(value) => value.as_u64(),
+            Value::String(value) => value.trim().parse::<u64>().ok(),
+            _ => None,
+        }
+    })
+}
+
 fn insert_string_if_missing(object: &mut Map<String, Value>, key: &str, value: Option<String>) {
     if object.get(key).is_none()
         && let Some(value) = value
@@ -1064,6 +1286,14 @@ fn insert_string_if_missing(object: &mut Map<String, Value>, key: &str, value: O
 }
 
 fn insert_u64_if_missing(object: &mut Map<String, Value>, key: &str, value: Option<u64>) {
+    if object.get(key).is_none()
+        && let Some(value) = value
+    {
+        object.insert(key.to_string(), json!(value));
+    }
+}
+
+fn insert_bool_if_missing(object: &mut Map<String, Value>, key: &str, value: Option<bool>) {
     if object.get(key).is_none()
         && let Some(value) = value
     {
@@ -1640,6 +1870,52 @@ mod tests {
     }
 
     #[test]
+    fn normalize_event_preserves_tmux_pane_metadata_in_payload_and_template_context() {
+        let event = normalize_event(IncomingEvent {
+            kind: "session-start".into(),
+            channel: None,
+            mention: None,
+            format: None,
+            template: None,
+            payload: json!({
+                "tool": "codex",
+                "tmux_session": "issue-180",
+                "tmux_window": "2",
+                "tmux_pane": "%11",
+                "tmux_pane_tty": "/dev/pts/42",
+                "tmux_attached": false,
+                "tmux_client_count": 0
+            }),
+        });
+        let context = event.template_context();
+
+        assert_eq!(event.kind, "session.started");
+        assert_eq!(event.payload["session_name"], json!("issue-180"));
+        assert_eq!(event.payload["tmux_session"], json!("issue-180"));
+        assert_eq!(event.payload["tmux_window"], json!("2"));
+        assert_eq!(event.payload["tmux_pane"], json!("%11"));
+        assert_eq!(event.payload["tmux_pane_tty"], json!("/dev/pts/42"));
+        assert_eq!(event.payload["tmux_attached"], json!(false));
+        assert_eq!(event.payload["tmux_client_count"], json!(0));
+        assert_eq!(
+            context.get("session").map(String::as_str),
+            Some("issue-180")
+        );
+        assert_eq!(
+            context.get("tmux_pane_tty").map(String::as_str),
+            Some("/dev/pts/42")
+        );
+        assert_eq!(
+            context.get("tmux_attached").map(String::as_str),
+            Some("false")
+        );
+        assert_eq!(
+            context.get("tmux_client_count").map(String::as_str),
+            Some("0")
+        );
+    }
+
+    #[test]
     fn normalize_event_maps_omc_signal_route_key_into_session_event() {
         let event = normalize_event(IncomingEvent {
             kind: "post-tool-use".into(),
@@ -1890,5 +2166,70 @@ mod tests {
             event.render_default(&MessageFormat::Inline).unwrap(),
             "[tmux:issue-24] 'error': build failed · 'complete': job complete"
         );
+    }
+
+    #[test]
+    fn canonical_kind_maps_prompt_lifecycle_aliases() {
+        let cases = [
+            ("prompt-submitted", "session.prompt-submitted"),
+            ("prompt-delivered", "session.prompt-delivered"),
+            ("prompt-delivery-failed", "session.prompt-delivery-failed"),
+            ("stopped", "session.stopped"),
+        ];
+
+        for (kind, expected) in cases {
+            let event = IncomingEvent {
+                kind: kind.into(),
+                channel: None,
+                mention: None,
+                format: None,
+                template: None,
+                payload: json!({}),
+            };
+            assert_eq!(
+                event.canonical_kind(),
+                expected,
+                "unexpected canonical kind for {kind}"
+            );
+        }
+    }
+
+    #[test]
+    fn normalize_event_maps_native_prompt_and_stop_signals() {
+        let cases = [
+            (
+                "user-prompt-submit",
+                json!({}),
+                "session.prompt-submitted",
+                "prompt-submitted",
+            ),
+            (
+                "notify",
+                json!({"normalized_event": "prompt-delivered"}),
+                "session.prompt-delivered",
+                "prompt-delivered",
+            ),
+            (
+                "notify",
+                json!({"route_key": "first-prompt-delivery-failed"}),
+                "session.prompt-delivery-failed",
+                "prompt-delivery-failed",
+            ),
+            ("stop", json!({}), "session.stopped", "stopped"),
+        ];
+
+        for (kind, payload, expected_kind, expected_status) in cases {
+            let event = normalize_event(IncomingEvent {
+                kind: kind.into(),
+                channel: None,
+                mention: None,
+                format: None,
+                template: None,
+                payload,
+            });
+            assert_eq!(event.kind, expected_kind);
+            assert_eq!(event.payload["status"], json!(expected_status));
+            assert_eq!(event.payload["normalized_event"], json!(expected_status));
+        }
     }
 }

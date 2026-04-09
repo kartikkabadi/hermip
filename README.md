@@ -27,100 +27,47 @@ Then OpenClaw should:
 - start the daemon
 - run live verification for issue / PR / git / tmux / install flows
 
-## What shipped in v0.4.0
+## What shipped in v0.3.0
 
-- **Install lifecycle polish** — repo-local installs, `clawhip install`, `clawhip update`, and `clawhip uninstall` are documented and aligned for clone-local operator workflows.
-- **Optional GitHub support prompt** — interactive install flows can offer an explicit opt-in GitHub star prompt, with `--skip-star-prompt` and `CLAWHIP_SKIP_STAR_PROMPT=1` available on both installer surfaces.
-- **Filesystem memory scaffolds** — `clawhip memory init` and `clawhip memory status` bootstrap and inspect the filesystem-offloaded memory layout for repos and workspaces.
-- **Native session contract polish** — OMC/OMX payload normalization now prefers the lower-noise `session.*` route family while keeping legacy `agent.*` compatibility.
-- **Config compatibility** — `[providers.discord]` remains the preferred config surface, while legacy `[discord]` still loads.
+- **Typed event model** — incoming events are normalized and validated into typed envelopes before dispatch.
+- **Multi-delivery router** — one event can resolve to zero, one, or many deliveries instead of stopping at the first match.
+- **Source extraction** — git, GitHub, and tmux monitoring now run as explicit sources feeding the daemon queue.
+- **Sink/render split** — rendering is separated from transport; v0.3.0 ships with the Discord sink and default renderer.
+- **Config compatibility** — `[providers.discord]` is the preferred config surface, while legacy `[discord]` still loads.
 
-See [`ARCHITECTURE.md`](ARCHITECTURE.md) for the release architecture that ships in v0.4.0.
+See [`ARCHITECTURE.md`](ARCHITECTURE.md) for the release architecture that ships in v0.3.0.
 
-## Good to use together
+## Provider-native hooks for Codex + Claude
 
-clawhip pairs well with coding session tools that run in tmux:
+clawhip no longer treats provider-specific launch wrappers as the public integration surface.
+Codex and Claude own session launch plus hook registration; clawhip stays the routing,
+normalization, and delivery layer.
 
-### [OMX (oh-my-codex)](https://github.com/Yeachan-Heo/oh-my-codex)
+Shared v1 hook events:
 
-OpenAI Codex wrapper with auto-monitoring. Launch monitored coding sessions:
+- `SessionStart`
+- `PreToolUse`
+- `PostToolUse`
+- `UserPromptSubmit`
+- `Stop`
 
-```bash
-clawhip tmux new -s issue-123 \
-  --channel YOUR_CHANNEL_ID \
-  --mention "<@your-user-id>" \
-  --keywords "error,PR created,complete" \
-  -- 'source ~/.zshrc && omx --madmax'
-
-# or attach monitoring to an existing tmux session
-clawhip tmux watch -s issue-123 \
-  --channel YOUR_CHANNEL_ID \
-  --mention "<@your-user-id>" \
-  --keywords "error,PR created,complete"
-
-# inspect active daemon-known watches later
-clawhip tmux list
-```
-
-See [`skills/omx/`](skills/omx/) for ready-to-use scripts.
-Recommended default clawhip + OMX setup: install the native bridge from [`integrations/omx/`](integrations/omx/) and forward the frozen hook envelope via `clawhip omx hook` when the CLI is available, with `POST /api/omx/hook` as the daemon fallback.
-Native OMC/OMX routing now prefers the normalized [`session.*` contract](docs/native-event-contract.md); legacy `agent.*` wrapper emits remain supported for compatibility only.
-
-### [OMC (oh-my-claudecode)](https://github.com/Yeachan-Heo/oh-my-claudecode)
-
-Claude Code wrapper with auto-monitoring. Launch monitored coding sessions:
+Local ingress for sample payloads and manual verification:
 
 ```bash
-clawhip tmux new -s issue-456 \
-  --channel YOUR_CHANNEL_ID \
-  --mention "<@your-user-id>" \
-  --keywords "error,PR created,complete" \
-  -- 'source ~/.zshrc && omc --openclaw --madmax'
+clawhip native hook --provider codex --file payload.json
+clawhip native hook --provider claude --file payload.json
+cat payload.json | clawhip native hook --provider codex
 ```
 
-See [`skills/omc/`](skills/omc/) for ready-to-use scripts.
-Direct Slack/Discord notifications inside OMC/OMX should be treated as deprecated; emit native events and let clawhip own routing, mention policy, and formatting.
+Recommended installation model:
 
-#### Gajae operator setup → verify → fix
+- install provider-native hooks at project or global scope
+- keep provider config in the provider-owned config files
+- keep routing metadata in `.clawhip/project.json`
+- use `.clawhip/hooks/` only for additive augmentation such as frontmatter or recent context
 
-For OMC/OMX-integrated setups, clawhip is the source of truth for routing doctrine and troubleshooting. Keep session skills focused on launch mechanics, then use clawhip docs for the operational rails:
-
-- quick entrypoint: this README section
-- detailed OMX runbook: [`integrations/omx/README.md`](integrations/omx/README.md)
-- native routing/reference contract: [`docs/native-event-contract.md`](docs/native-event-contract.md)
-
-**Setup**
-1. Confirm the daemon you plan to use is the one you expect:
-   ```bash
-   clawhip --version
-   clawhip status
-   ```
-2. For OMX, install the native hook bridge into the target workspace, then validate it:
-   ```bash
-   ./integrations/omx/install-hook.sh /path/to/repo/.omx/hooks
-   omx hooks validate
-   omx hooks test
-   ```
-3. Add an explicit native session route. Use `event = "session.*"` and filter on `repo_name`, not `repo`:
-   ```toml
-   [[routes]]
-   event = "session.*"
-   filter = { tool = "omx", repo_name = "clawhip" }
-   channel = "1480171113253175356"
-   format = "compact"
-   ```
-   For OMC-native session traffic, keep the same event family and switch the tool filter to `omc` when needed.
-4. Leave `[defaults].channel` configured only as a fallback safety net, not as your primary session-routing policy.
-
-**Verify**
-- Trigger a real OMC/OMX session event and confirm it lands in the intended route channel.
-- If the event lands in the default channel instead, treat that as a route miss first.
-- If `clawhip cron run` is part of your operator flow, verify `[[cron.jobs]]` exists before treating the command as meaningful.
-
-**Fix**
-- **daemon version/runtime mismatch** → reinstall or update clawhip, then restart the daemon so the running binary matches the hook/runtime you just installed.
-- **hook installed but no native session delivery** → verify both the hook install and a matching `session.*` route exist.
-- **wrong repo filter** → replace `repo = "..."` with `repo_name = "..."` for native session routes.
+clawhip still pairs well with tmux when you want keyword/stale monitoring, but tmux is now
+optional and no longer the primary hook-registration surface.
 
 ## Recipes
 
@@ -186,7 +133,6 @@ Operational notes:
 - mention your Clawdbot/OpenClaw bot user so the bot actually wakes up and acts
 - use plain operational language like "check open PRs/issues", "review blockers", and "continue stalled work"
 - this keeps scheduling outside the agent loop: cron handles timing, clawhip handles delivery, Discord handles the handoff
-- if you want `clawhip cron run` to do anything useful, define `[[cron.jobs]]` first; an empty cron section gives clawhip nothing meaningful to execute
 
 ## Filesystem-offloaded memory pattern
 
@@ -232,10 +178,6 @@ Built-in starter plugins:
 
 - `plugins/codex/`
 - `plugins/claude-code/`
-
-Native OMX hook-forwarding assets are bundled separately under:
-
-- `integrations/omx/`
 
 List installed plugins with:
 
@@ -368,7 +310,7 @@ format = "alert"
               -> [Discord REST / Slack webhook delivery]
 ```
 
-Input sources in v0.4.0:
+Input sources in v0.3.0:
 - CLI thin clients and custom events
 - GitHub webhook ingress plus GitHub polling source
 - git monitor source
@@ -481,61 +423,45 @@ Verification:
 - create real empty commit in monitored repo
 - confirm final Discord body contains commit summary and mention
 
-### 7. Native OMC / OMX session contract
+### 7. Provider-native session contract
 
-Canonical native routing for OMC/OMX uses `session.*` events after clawhip normalization. For new OMX integrations, the default/recommended path is the native bridge in [`integrations/omx/`](integrations/omx/) forwarding the frozen v1 envelope to `clawhip omx hook` or `POST /api/omx/hook`; keep `agent.*` wrapper emits only for compatibility.
+Canonical native routing now starts from provider-native Codex and Claude hook payloads and
+enters clawhip through `clawhip native hook`.
 
-Accepted upstream inputs:
-- legacy wrapper emits like `agent.started` / `agent.finished` / `agent.failed`
-- OMC command/HTTP payloads with `signal.routeKey`
-- OMX hook payloads with `context.normalized_event`
-- native OMX hook-envelope CLI ingress via `clawhip omx hook`
-- native OMX hook-envelope POSTs to `POST /api/omx/hook`
+Shared v1 hook events:
+- `SessionStart`
+- `PreToolUse`
+- `PostToolUse`
+- `UserPromptSubmit`
+- `Stop`
 
-Canonical normalized events:
-- `session.started`
-- `session.blocked`
-- `session.finished`
-- `session.failed`
-- `session.retry-needed`
-- `session.pr-created`
-- `session.test-started`
-- `session.test-finished`
-- `session.test-failed`
-- `session.handoff-needed`
-
-Normalized metadata (when upstream provides it):
-- `tool`
-- `session_name`
+Stable routing metadata (when available):
+- `provider`
+- `event`
 - `session_id`
-- `repo_name`
-- `repo_path`
+- `directory`
 - `worktree_path`
+- `repo_name`
+- `project`
 - `branch`
-- `issue_number`
-- `pr_number`
-- `pr_url`
-- `command`
 - `tool_name`
-- `test_runner`
-- `status`
+- `command`
 - `summary`
-- `error_message`
 - `event_timestamp`
-- `raw_event`
-- `contract_event`
+
+Augmentation rules:
+- provider input + clawhip project metadata define the immutable base contract
+- `.clawhip/hooks/` scripts may only add fields or enrich message/context
+- augmenters must not remove or overwrite base routing keys
 
 Route guidance:
-- prefer `session.*` for new native OMC/OMX routes
-- `agent.*` remains supported for clawhip-local wrapper compatibility
-- `agent.started|blocked|finished|failed` and `session.started|blocked|finished|failed` cross-match in routing for backward compatibility
-- prefer route filters like `tool`, `repo_name`, `session_name`, `issue_number`, and `branch` over brittle message parsing
-- for OMX hook plugins, prefer forwarding the frozen v1 envelope to `POST /api/omx/hook` instead of translating it into a generic `/event` payload
+- prefer filters like `provider`, `event`, `repo_name`, `project`, and `branch`
+- avoid route logic that depends on rendered message text
+- keep provider-specific extras out of the shared v1 route surface until explicitly adopted
 
-Native OMX bridge assets live in [`integrations/omx/`](integrations/omx/).
-
-See [`docs/native-event-contract.md`](docs/native-event-contract.md) for the full normalization/deprecation notes.
-See [`integrations/omx/README.md`](integrations/omx/README.md) for the OMX-native SDK/helper surface.
+See [`docs/native-event-contract.md`](docs/native-event-contract.md) for the routing/augmentation
+guide and [`docs/event-contract-v1.md`](docs/event-contract-v1.md) for the frozen shared-event
+reference.
 
 ### 8. Agent lifecycle preset family
 
@@ -589,12 +515,18 @@ Verification:
 - let real tmux session idle past threshold
 - confirm final Discord body in target channel
 
-### 11. tmux wrapper / watch preset
+### 11. Provider-native sessions + tmux fallback
 
-Input:
+Preferred input:
+```bash
+clawhip native hook --provider codex --file payload.json
+clawhip native hook --provider claude --file payload.json
+clawhip tmux list
+```
+
+Fallback/debug input:
 ```bash
 clawhip tmux new -s <session> \
-  --channel <id> \
   --mention '<@id>' \
   --keywords 'error,PR created,FAILED,complete' \
   --stale-minutes 10 \
@@ -606,30 +538,30 @@ clawhip tmux new -s <session> \
   -- command args
 
 clawhip tmux watch -s <existing-session> \
-  --channel <id> \
   --mention '<@id>' \
   --keywords 'error,PR created,FAILED,complete' \
   --stale-minutes 10 \
   --format alert \
   --retry-enter true
-
-clawhip tmux list
 ```
 
 Behavior:
-- `tmux new` creates a tmux session using the user's default shell (or `--shell` override)
-- `tmux new` sends the requested command into the session, retrying Enter for TUI apps by default with exponential backoff (`--retry-enter=false` disables it, `--retry-enter-count` / `--retry-enter-delay-ms` tune retries)
-- when `tmux new` omits `--channel`, clawhip reuses the first matching Discord route channel for the session name before falling back to `defaults.channel`
-- `tmux watch` attaches monitoring to an already-running tmux session
-- both commands register the session with the daemon and emit an audit log line with launch options, timestamp, and parent-process provenance
+- Codex and Claude should own session launch and hook registration
+- `clawhip native hook` is the local thin-client ingress for provider payloads
+- `tmux new` / `tmux watch` are fallback paths for debugging or manual recovery
 - `tmux list` shows active daemon-known watches with source, registration timestamp, and parent-process info
-- daemon monitors keyword/stale events
-- final delivery goes through daemon routing
+- final delivery still goes through daemon routing
+
+Routing note:
+- session names are labels for operators, not routing authority
+- project metadata should be the source of truth for routing
+- broad prefix monitors like `clawhip*` are dangerous because they can overlap with launcher-registered watches and create stale/keyword noise
 
 Verification:
-- run wrapper or watch an existing session
-- emit keyword in pane
-- confirm Discord message body and mention
+- launch a real Codex or Claude session with provider-native hooks enabled
+- verify the tmux pane is actually alive
+- confirm routed delivery in Discord
+- if alert text conflicts with pane reality, trust the pane and inspect monitor registrations
 
 ### 12. install lifecycle preset
 
@@ -829,7 +761,7 @@ Required live sign-off presets:
 - PR status changed
 - PR merged
 - git commit
-- agent started / blocked / finished / failed
+- provider-native shared hook events
 - tmux keyword
 - tmux stale
 - tmux wrapper
@@ -846,7 +778,7 @@ clawhip send ...        # thin client custom event
 clawhip github ...      # thin client GitHub event
 clawhip git ...         # thin client git event
 clawhip agent ...       # thin client agent lifecycle event
-clawhip omx hook ...    # native OMX hook-envelope thin client
+clawhip native hook ... # provider-native hook thin client
 clawhip tmux ...        # thin client / wrapper surface
 clawhip plugin list     # list installed/bundled shell-hook plugins
 ```

@@ -13,8 +13,7 @@ mod hooks;
 mod keyword_window;
 mod lifecycle;
 mod memory;
-mod omc;
-mod omx;
+mod native_hooks;
 mod plugins;
 mod render;
 mod router;
@@ -22,6 +21,7 @@ mod sink;
 mod slack;
 mod source;
 mod tmux_wrapper;
+mod update;
 
 use std::sync::Arc;
 
@@ -29,7 +29,7 @@ use clap::Parser;
 
 use crate::cli::{
     AgentCommands, Cli, Commands, ConfigCommand, CronCommands, GitCommands, GithubCommands,
-    HooksCommands, MemoryCommands, OmxCommands, PluginCommands, TmuxCommands,
+    HooksCommands, MemoryCommands, NativeCommands, PluginCommands, TmuxCommands, UpdateCommands,
 };
 use crate::client::DaemonClient;
 use crate::config::AppConfig;
@@ -174,7 +174,44 @@ async fn real_main() -> Result<()> {
             systemd,
             skip_star_prompt,
         } => lifecycle::install(systemd, skip_star_prompt),
-        Commands::Update { restart } => lifecycle::update(restart),
+        Commands::Update { command, restart } => match command {
+            None => lifecycle::update(restart),
+            Some(UpdateCommands::Check) => {
+                let http = reqwest::Client::builder()
+                    .user_agent(format!("clawhip/{VERSION}"))
+                    .build()?;
+                match update::check_latest_version(&http).await {
+                    Ok(Some((version, url))) => {
+                        if update::version_is_newer(&version) {
+                            println!("Update available: v{VERSION} -> {version}\n{url}");
+                        } else {
+                            println!("Already up to date (v{VERSION})");
+                        }
+                    }
+                    Ok(None) => println!("No releases found"),
+                    Err(error) => eprintln!("Check failed: {error}"),
+                }
+                Ok(())
+            }
+            Some(UpdateCommands::Approve) => {
+                let client = DaemonClient::from_config(config.as_ref());
+                let result = client.post_update_action("approve").await?;
+                println!("{}", serde_json::to_string_pretty(&result)?);
+                Ok(())
+            }
+            Some(UpdateCommands::Dismiss) => {
+                let client = DaemonClient::from_config(config.as_ref());
+                let result = client.post_update_action("dismiss").await?;
+                println!("{}", serde_json::to_string_pretty(&result)?);
+                Ok(())
+            }
+            Some(UpdateCommands::Status) => {
+                let client = DaemonClient::from_config(config.as_ref());
+                let result = client.get_update_status().await?;
+                println!("{}", serde_json::to_string_pretty(&result)?);
+                Ok(())
+            }
+        },
         Commands::Uninstall {
             remove_systemd,
             remove_config,
@@ -216,16 +253,26 @@ async fn real_main() -> Result<()> {
                 Ok(())
             }
         },
-        Commands::Omc(args) => omc::run(args, config.as_ref()).await,
-        Commands::Omx { command } => match command {
-            OmxCommands::Hook(args) => {
+        Commands::Native { command } => match command {
+            NativeCommands::Hook(args) => {
                 let client = DaemonClient::from_config(config.as_ref());
-                let payload = args.read_payload(&mut std::io::stdin())?;
-                let response = client.send_omx_hook(&payload).await?;
+                let mut payload = args.read_payload(&mut std::io::stdin())?;
+                if let Some(provider) = args.provider.as_deref()
+                    && payload.get("provider").is_none()
+                    && let Some(object) = payload.as_object_mut()
+                {
+                    object.insert("provider".into(), serde_json::json!(provider));
+                }
+                if let Some(source) = args.source.as_deref()
+                    && payload.get("source").is_none()
+                    && let Some(object) = payload.as_object_mut()
+                {
+                    object.insert("source".into(), serde_json::json!(source));
+                }
+                let response = client.send_native_hook(&payload).await?;
                 println!("{}", serde_json::to_string(&response)?);
                 Ok(())
             }
-            OmxCommands::Launch(args) => omx::run(args, config.as_ref()).await,
         },
         Commands::Cron { command } => match command {
             CronCommands::Run { id } => {
@@ -331,6 +378,7 @@ fn format_tmux_list(registrations: &[crate::source::RegisteredTmuxSession]) -> S
 #[cfg(test)]
 mod tests {
     use super::format_tmux_list;
+    use crate::events::RoutingMetadata;
     use crate::source::tmux::{ParentProcessInfo, RegisteredTmuxSession, RegistrationSource};
 
     #[test]
@@ -339,6 +387,7 @@ mod tests {
             session: "issue-105".into(),
             channel: Some("alerts".into()),
             mention: Some("<@123>".into()),
+            routing: RoutingMetadata::default(),
             keywords: vec!["error".into(), "complete".into()],
             keyword_window_secs: 30,
             stale_minutes: 10,

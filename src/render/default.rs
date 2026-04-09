@@ -233,6 +233,35 @@ impl Renderer for DefaultRenderer {
                 MessageFormat::Raw,
             ) => serde_json::to_string_pretty(payload)?,
 
+            (
+                "github.release-published" | "github.release-prereleased" | "github.release-edited",
+                MessageFormat::Compact,
+            ) => render_github_release(payload, event.canonical_kind())?,
+            (
+                "github.release-published" | "github.release-prereleased" | "github.release-edited",
+                MessageFormat::Alert,
+            ) => format!(
+                "🚨 {}",
+                render_github_release(payload, event.canonical_kind())?
+            ),
+            (
+                "github.release-published" | "github.release-prereleased" | "github.release-edited",
+                MessageFormat::Inline,
+            ) => {
+                let tag = string_field(payload, "tag")?;
+                let repo = string_field(payload, "repo")?;
+                let prerelease = payload
+                    .get("is_prerelease")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false);
+                let suffix = if prerelease { " (pre)" } else { "" };
+                format!("[release] {repo} {tag}{suffix}")
+            }
+            (
+                "github.release-published" | "github.release-prereleased" | "github.release-edited",
+                MessageFormat::Raw,
+            ) => serde_json::to_string_pretty(payload)?,
+
             ("tmux.keyword", MessageFormat::Compact) => format!(
                 "tmux:{} matched '{}' => {}",
                 string_field(payload, "session")?,
@@ -303,6 +332,19 @@ fn optional_string_field(payload: &Value, key: &str) -> Option<String> {
 
 fn optional_u64_field(payload: &Value, key: &str) -> Option<u64> {
     payload.get(key).and_then(Value::as_u64)
+}
+
+fn optional_bool_field(payload: &Value, key: &str) -> Option<bool> {
+    match payload.get(key) {
+        Some(Value::Bool(value)) => Some(*value),
+        Some(Value::Number(value)) => value.as_u64().map(|number| number != 0),
+        Some(Value::String(value)) => match value.trim().to_ascii_lowercase().as_str() {
+            "1" | "true" | "yes" | "attached" => Some(true),
+            "0" | "false" | "no" | "detached" => Some(false),
+            _ => None,
+        },
+        _ => None,
+    }
 }
 
 fn agent_optional_mention_prefix(payload: &Value) -> String {
@@ -385,13 +427,18 @@ fn session_subject(payload: &Value) -> String {
 
 fn session_status_label(kind: &str, payload: &Value) -> String {
     match kind {
-        "session.started" | "session.blocked" | "session.finished" | "session.failed" => {
-            optional_string_field(payload, "status").unwrap_or_else(|| {
-                kind.strip_prefix("session.")
-                    .unwrap_or(kind)
-                    .replace('-', " ")
-            })
-        }
+        "session.started"
+        | "session.blocked"
+        | "session.finished"
+        | "session.failed"
+        | "session.prompt-submitted"
+        | "session.prompt-delivered"
+        | "session.prompt-delivery-failed"
+        | "session.stopped" => optional_string_field(payload, "status").unwrap_or_else(|| {
+            kind.strip_prefix("session.")
+                .unwrap_or(kind)
+                .replace('-', " ")
+        }),
         _ => kind.strip_prefix("session.").unwrap_or(kind).to_string(),
     }
 }
@@ -424,6 +471,22 @@ fn session_detail_suffix(payload: &Value) -> String {
     }
     if let Some(error_message) = optional_string_field(payload, "error_message") {
         parts.push(format!("error={error_message}"));
+    }
+    if let Some(tmux_identity) = tmux_identity(payload) {
+        parts.push(format!("tmux={tmux_identity}"));
+    }
+    if let Some(tmux_pane_tty) = optional_string_field(payload, "tmux_pane_tty") {
+        parts.push(format!("pane_tty={tmux_pane_tty}"));
+    }
+    if let Some(tmux_client_count) = optional_u64_field(payload, "tmux_client_count") {
+        parts.push(format!("clients={tmux_client_count}"));
+    }
+    if let Some(tmux_attached) = optional_bool_field(payload, "tmux_attached") {
+        parts.push(if tmux_attached {
+            "attached".to_string()
+        } else {
+            "detached".to_string()
+        });
     }
 
     if parts.is_empty() {
@@ -462,11 +525,46 @@ fn session_inline_suffix(payload: &Value) -> String {
     if let Some(error_message) = optional_string_field(payload, "error_message") {
         parts.push(format!("error: {error_message}"));
     }
+    if let Some(tmux_identity) = tmux_identity(payload) {
+        parts.push(format!("tmux {tmux_identity}"));
+    }
+    if let Some(tmux_pane_tty) = optional_string_field(payload, "tmux_pane_tty") {
+        parts.push(tmux_pane_tty);
+    }
+    if let Some(tmux_client_count) = optional_u64_field(payload, "tmux_client_count") {
+        parts.push(format!("{tmux_client_count} clients"));
+    }
+    if let Some(tmux_attached) = optional_bool_field(payload, "tmux_attached") {
+        parts.push(if tmux_attached {
+            "attached".to_string()
+        } else {
+            "detached".to_string()
+        });
+    }
 
     if parts.is_empty() {
         String::new()
     } else {
         format!(" · {}", parts.join(" · "))
+    }
+}
+
+fn tmux_identity(payload: &Value) -> Option<String> {
+    let mut parts = Vec::new();
+    if let Some(session) = optional_string_field(payload, "tmux_session") {
+        parts.push(session);
+    }
+    if let Some(window) = optional_string_field(payload, "tmux_window") {
+        parts.push(window);
+    }
+    if let Some(pane) = optional_string_field(payload, "tmux_pane") {
+        parts.push(pane);
+    }
+
+    if parts.is_empty() {
+        None
+    } else {
+        Some(parts.join(":"))
     }
 }
 
@@ -583,6 +681,38 @@ fn github_ci_target(payload: &Value) -> Result<String> {
         Some(number) => format!("{repo}#{number}"),
         None => repo,
     })
+}
+
+fn render_github_release(payload: &Value, kind: &str) -> Result<String> {
+    let repo = string_field(payload, "repo")?;
+    let tag = string_field(payload, "tag")?;
+    let name = optional_string_field(payload, "name").unwrap_or_default();
+    let url = optional_string_field(payload, "url").unwrap_or_default();
+    let prerelease = payload
+        .get("is_prerelease")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+
+    let action_label = match kind {
+        "github.release-prereleased" => "prereleased",
+        "github.release-edited" => "edited",
+        _ => "published",
+    };
+
+    let pre_flag = if prerelease { " (prerelease)" } else { "" };
+    let name_part = if name.is_empty() || name == tag {
+        String::new()
+    } else {
+        format!(" \"{name}\"")
+    };
+
+    let mut parts = vec![format!(
+        "release {action_label} · {repo} {tag}{pre_flag}{name_part}"
+    )];
+    if !url.is_empty() {
+        parts.push(url);
+    }
+    Ok(parts.join(" · "))
 }
 
 fn short_sha(sha: &str) -> String {
@@ -817,5 +947,124 @@ mod tests {
             .render(&event, &MessageFormat::Compact)
             .unwrap();
         assert_eq!(rendered, "git:repo@main 1234567 ship it");
+    }
+
+    #[test]
+    fn renders_session_events_with_tmux_metadata() {
+        let event = IncomingEvent {
+            kind: "session.started".into(),
+            channel: None,
+            mention: None,
+            format: None,
+            template: None,
+            payload: json!({
+                "tool": "codex",
+                "session_name": "issue-180",
+                "repo_name": "clawhip",
+                "tmux_session": "issue-180",
+                "tmux_window": "2",
+                "tmux_pane": "%11",
+                "tmux_pane_tty": "/dev/pts/42",
+                "tmux_attached": false,
+                "tmux_client_count": 0
+            }),
+        };
+
+        let compact = DefaultRenderer
+            .render(&event, &MessageFormat::Compact)
+            .unwrap();
+        let inline = DefaultRenderer
+            .render(&event, &MessageFormat::Inline)
+            .unwrap();
+
+        assert_eq!(
+            compact,
+            "codex issue-180 started (repo=clawhip, tmux=issue-180:2:%11, pane_tty=/dev/pts/42, clients=0, detached)"
+        );
+        assert_eq!(
+            inline,
+            "[codex issue-180] started · clawhip · tmux issue-180:2:%11 · /dev/pts/42 · 0 clients · detached"
+        );
+    }
+
+    #[test]
+    fn renders_release_published_compact() {
+        let event = IncomingEvent::github_release(
+            "published",
+            "Yeachan-Heo/clawhip".into(),
+            "v0.6.0".into(),
+            "clawhip 0.6.0".into(),
+            false,
+            "https://github.com/Yeachan-Heo/clawhip/releases/tag/v0.6.0".into(),
+            Some("Yeachan-Heo".into()),
+            None,
+        );
+
+        let rendered = DefaultRenderer
+            .render(&event, &MessageFormat::Compact)
+            .unwrap();
+        assert!(rendered.contains("release published"));
+        assert!(rendered.contains("Yeachan-Heo/clawhip"));
+        assert!(rendered.contains("v0.6.0"));
+        assert!(rendered.contains("clawhip 0.6.0"));
+    }
+
+    #[test]
+    fn renders_release_prerelease_compact_with_flag() {
+        let event = IncomingEvent::github_release(
+            "prereleased",
+            "Yeachan-Heo/clawhip".into(),
+            "v0.6.0-rc.1".into(),
+            "v0.6.0-rc.1".into(),
+            true,
+            "https://github.com/Yeachan-Heo/clawhip/releases/tag/v0.6.0-rc.1".into(),
+            None,
+            None,
+        );
+
+        let rendered = DefaultRenderer
+            .render(&event, &MessageFormat::Compact)
+            .unwrap();
+        assert!(rendered.contains("prereleased"));
+        assert!(rendered.contains("(prerelease)"));
+    }
+
+    #[test]
+    fn renders_release_inline_format() {
+        let event = IncomingEvent::github_release(
+            "published",
+            "Yeachan-Heo/clawhip".into(),
+            "v0.6.0".into(),
+            "clawhip 0.6.0".into(),
+            false,
+            "https://github.com/Yeachan-Heo/clawhip/releases/tag/v0.6.0".into(),
+            None,
+            None,
+        );
+
+        let rendered = DefaultRenderer
+            .render(&event, &MessageFormat::Inline)
+            .unwrap();
+        assert_eq!(rendered, "[release] Yeachan-Heo/clawhip v0.6.0");
+    }
+
+    #[test]
+    fn renders_release_alert_format() {
+        let event = IncomingEvent::github_release(
+            "published",
+            "Yeachan-Heo/clawhip".into(),
+            "v0.6.0".into(),
+            "clawhip 0.6.0".into(),
+            false,
+            "https://github.com/Yeachan-Heo/clawhip/releases/tag/v0.6.0".into(),
+            None,
+            None,
+        );
+
+        let rendered = DefaultRenderer
+            .render(&event, &MessageFormat::Alert)
+            .unwrap();
+        assert!(rendered.starts_with("🚨"));
+        assert!(rendered.contains("release published"));
     }
 }

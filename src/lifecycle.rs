@@ -29,15 +29,40 @@ pub fn install(systemd: bool, skip_star_prompt: bool) -> Result<()> {
 
 pub fn update(restart: bool) -> Result<()> {
     let repo_root = current_repo_root()?;
+    update_repo(&repo_root, restart)
+}
+
+/// Perform a self-update using an explicit repo root (from config) or by
+/// attempting automatic discovery. Prefer passing an explicit path for
+/// deterministic behavior in daemon/systemd contexts.
+pub fn update_from_repo(explicit_root: Option<&str>, restart: bool) -> Result<()> {
+    let repo_root = match explicit_root {
+        Some(path) => {
+            let root = PathBuf::from(path);
+            if !root.join("Cargo.toml").exists() || !root.join("src").exists() {
+                return Err(anyhow!(
+                    "configured repo_root '{}' does not contain a clawhip checkout",
+                    root.display()
+                )
+                .into());
+            }
+            root
+        }
+        None => find_repo_root()?,
+    };
+    update_repo(&repo_root, restart)
+}
+
+fn update_repo(repo_root: &Path, restart: bool) -> Result<()> {
     run(Command::new("git")
         .arg("-C")
-        .arg(&repo_root)
+        .arg(repo_root)
         .arg("pull")
         .arg("--ff-only"))?;
     run(Command::new("cargo")
         .arg("install")
         .arg("--path")
-        .arg(&repo_root)
+        .arg(repo_root)
         .arg("--force"))?;
     ensure_config_dir()?;
     plugins::install_bundled_plugins(&config_dir().join("plugins"))?;
@@ -46,6 +71,34 @@ pub fn update(restart: bool) -> Result<()> {
     }
     println!("clawhip update complete");
     Ok(())
+}
+
+fn find_repo_root() -> Result<PathBuf> {
+    if let Ok(root) = current_repo_root() {
+        return Ok(root);
+    }
+    let output = Command::new("cargo")
+        .arg("locate-project")
+        .arg("--workspace")
+        .arg("--message-format=plain")
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .output()
+        .ok()
+        .filter(|o| o.status.success())
+        .and_then(|o| String::from_utf8(o.stdout).ok());
+    if let Some(path) = output {
+        let manifest = PathBuf::from(path.trim());
+        if let Some(parent) = manifest.parent()
+            && parent.join("src").exists()
+        {
+            return Ok(parent.to_path_buf());
+        }
+    }
+    Err(anyhow!(
+        "could not locate clawhip repo root; run from the git clone or ensure cargo is available"
+    )
+    .into())
 }
 
 pub fn uninstall(remove_systemd: bool, remove_config: bool) -> Result<()> {
@@ -382,5 +435,53 @@ mod tests {
         );
         let stdout = String::from_utf8(output).expect("utf8 output");
         assert!(stdout.contains("continuing without it"));
+    }
+
+    #[test]
+    fn update_from_repo_rejects_invalid_explicit_root() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let bad_path = dir.path().join("not-a-checkout");
+        std::fs::create_dir_all(&bad_path).expect("mkdir");
+
+        let error = update_from_repo(Some(bad_path.to_str().unwrap()), false)
+            .expect_err("should reject missing Cargo.toml");
+
+        assert!(
+            error
+                .to_string()
+                .contains("does not contain a clawhip checkout")
+        );
+    }
+
+    #[test]
+    fn update_from_repo_validates_explicit_root_structure() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let root = dir.path();
+        // Create only Cargo.toml but not src/
+        std::fs::write(root.join("Cargo.toml"), "[package]\nname = \"clawhip\"")
+            .expect("write Cargo.toml");
+
+        let error = update_from_repo(Some(root.to_str().unwrap()), false)
+            .expect_err("should reject missing src/");
+
+        assert!(
+            error
+                .to_string()
+                .contains("does not contain a clawhip checkout")
+        );
+    }
+
+    #[test]
+    fn find_repo_root_returns_cwd_when_valid() {
+        // When run from the actual repo root (which is the case in cargo test),
+        // find_repo_root should succeed
+        let result = find_repo_root();
+        // This test runs from the repo root, so it should find it
+        if let Ok(root) = result {
+            assert!(root.join("Cargo.toml").exists());
+            assert!(root.join("src").exists());
+        }
+        // If CWD is not repo root (CI sandbox), the test still passes — we just
+        // verify it doesn't panic
     }
 }

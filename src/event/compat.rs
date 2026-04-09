@@ -6,61 +6,13 @@ use crate::Result;
 use crate::event::{
     AgentEvent, CustomEvent, EventBody, EventEnvelope, EventMetadata, EventPriority,
     GitBranchChangedEvent, GitCommitAggregatedEvent, GitCommitEvent, GitHubCIEvent,
-    GitHubIssueEvent, GitHubPREvent, GitHubPRStatusEvent, TmuxKeywordAggregatedEvent,
-    TmuxKeywordEvent, TmuxStaleEvent, WorkspaceEvent,
+    GitHubIssueEvent, GitHubPREvent, GitHubPRStatusEvent, GitHubReleaseEvent,
+    TmuxKeywordAggregatedEvent, TmuxKeywordEvent, TmuxStaleEvent, WorkspaceEvent,
 };
 use crate::events::{IncomingEvent, normalize_event};
 
 pub fn from_incoming_event(event: &IncomingEvent) -> Result<EventEnvelope> {
     EventEnvelope::try_from(event)
-}
-
-#[cfg_attr(not(test), allow(dead_code))]
-pub fn from_omx_hook_envelope_json(payload: &Value) -> Result<EventEnvelope> {
-    let incoming = incoming_event_from_omx_hook_envelope_json(payload)?;
-    from_incoming_event(&incoming)
-}
-
-pub fn incoming_event_from_omx_hook_envelope_json(payload: &Value) -> Result<IncomingEvent> {
-    let schema_version = payload
-        .get("schema_version")
-        .and_then(Value::as_str)
-        .ok_or_else(|| "missing string field 'schema_version'".to_string())?;
-
-    if schema_version != "1" {
-        return Err(format!("unsupported schema_version '{schema_version}'").into());
-    }
-
-    let normalized_event = payload
-        .pointer("/context/normalized_event")
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .ok_or_else(|| "missing string field 'context.normalized_event'".to_string())?;
-
-    let kind = payload
-        .get("event")
-        .and_then(Value::as_str)
-        .map(ToString::to_string)
-        .unwrap_or_else(|| normalized_event.to_string());
-
-    let incoming = IncomingEvent {
-        kind,
-        channel: optional_string_field(payload, "channel"),
-        mention: optional_string_field(payload, "mention").or_else(|| {
-            payload
-                .pointer("/context/mention")
-                .and_then(Value::as_str)
-                .map(str::trim)
-                .filter(|value| !value.is_empty())
-                .map(ToString::to_string)
-        }),
-        format: None,
-        template: None,
-        payload: payload.clone(),
-    };
-
-    Ok(incoming)
 }
 
 impl TryFrom<&IncomingEvent> for EventEnvelope {
@@ -104,6 +56,15 @@ fn body_for(kind: &str, payload: &Value) -> Result<EventBody> {
         )?)),
         "github.issue-closed" => Ok(EventBody::GitHubIssueClosed(github_issue_event(payload)?)),
         "github.pr-status-changed" => github_pr_body(payload),
+        "github.release-published" => Ok(EventBody::GitHubReleasePublished(github_release_event(
+            payload,
+        )?)),
+        "github.release-prereleased" => Ok(EventBody::GitHubReleasePrereleased(
+            github_release_event(payload)?,
+        )),
+        "github.release-edited" => Ok(EventBody::GitHubReleaseEdited(github_release_event(
+            payload,
+        )?)),
         "github.ci-failed" => Ok(EventBody::GitHubCIFailed(GitHubCIEvent {
             repo: string_field(payload, "repo")?,
             number: payload.get("number").and_then(Value::as_u64),
@@ -134,6 +95,12 @@ fn body_for(kind: &str, payload: &Value) -> Result<EventBody> {
         "session.test-finished" => Ok(EventBody::AgentTestFinished(agent_event(payload)?)),
         "session.test-failed" => Ok(EventBody::AgentTestFailed(agent_event(payload)?)),
         "session.handoff-needed" => Ok(EventBody::AgentHandoffNeeded(agent_event(payload)?)),
+        "session.prompt-submitted" => Ok(EventBody::AgentPromptSubmitted(agent_event(payload)?)),
+        "session.prompt-delivered" => Ok(EventBody::AgentPromptDelivered(agent_event(payload)?)),
+        "session.prompt-delivery-failed" => {
+            Ok(EventBody::AgentPromptDeliveryFailed(agent_event(payload)?))
+        }
+        "session.stopped" => Ok(EventBody::AgentStopped(agent_event(payload)?)),
         "workspace.session.started" | "workspace.session.ended" => Ok(
             EventBody::WorkspaceSessionStarted(workspace_event(payload)?),
         ),
@@ -225,6 +192,21 @@ fn github_issue_event(payload: &Value) -> Result<GitHubIssueEvent> {
         number: u64_field(payload, "number")?,
         title: string_field(payload, "title")?,
         comments: payload.get("comments").and_then(Value::as_u64),
+    })
+}
+
+fn github_release_event(payload: &Value) -> Result<GitHubReleaseEvent> {
+    Ok(GitHubReleaseEvent {
+        repo: string_field(payload, "repo")?,
+        tag: string_field(payload, "tag")?,
+        name: optional_string_field(payload, "name").unwrap_or_default(),
+        action: optional_string_field(payload, "action").unwrap_or_else(|| "published".to_string()),
+        is_prerelease: payload
+            .get("is_prerelease")
+            .and_then(Value::as_bool)
+            .unwrap_or(false),
+        url: optional_string_field(payload, "url").unwrap_or_default(),
+        actor: optional_string_field(payload, "actor"),
     })
 }
 
@@ -322,6 +304,12 @@ fn agent_event(payload: &Value) -> Result<AgentEvent> {
         pr_url: optional_string_field(payload, "pr_url"),
         command: optional_string_field(payload, "command"),
         tool_name: optional_string_field(payload, "tool_name"),
+        tmux_session: optional_string_field(payload, "tmux_session"),
+        tmux_window: optional_string_field(payload, "tmux_window"),
+        tmux_pane: optional_string_field(payload, "tmux_pane"),
+        tmux_pane_tty: optional_string_field(payload, "tmux_pane_tty"),
+        tmux_attached: payload.get("tmux_attached").and_then(Value::as_bool),
+        tmux_client_count: payload.get("tmux_client_count").and_then(Value::as_u64),
         elapsed_secs: payload.get("elapsed_secs").and_then(Value::as_u64),
         summary: optional_string_field(payload, "summary"),
         error_summary: optional_string_field(payload, "error_summary")
@@ -392,15 +380,19 @@ fn workspace_event(payload: &Value) -> Result<WorkspaceEvent> {
 
 fn priority_for(kind: &str, payload: &Value) -> EventPriority {
     match kind {
-        "agent.failed" | "session.failed" | "session.test-failed" | "github.ci-failed" => {
-            EventPriority::Critical
-        }
+        "agent.failed"
+        | "session.failed"
+        | "session.test-failed"
+        | "session.prompt-delivery-failed"
+        | "github.ci-failed" => EventPriority::Critical,
         "agent.blocked"
         | "session.blocked"
         | "session.retry-needed"
         | "session.handoff-needed"
+        | "session.stopped"
         | "tmux.stale"
         | "workspace.session.blocked" => EventPriority::High,
+        "github.release-published" | "github.release-prereleased" => EventPriority::High,
         "github.pr-status-changed"
             if optional_string_field(payload, "new_status")
                 .map(|status| status == "merged" || status == "closed")
@@ -636,6 +628,22 @@ mod tests {
                 "session.handoff-needed",
                 EventBody::AgentHandoffNeeded(sample_agent_event("handoff-needed")),
             ),
+            (
+                "session.prompt-submitted",
+                EventBody::AgentPromptSubmitted(sample_agent_event("prompt-submitted")),
+            ),
+            (
+                "session.prompt-delivered",
+                EventBody::AgentPromptDelivered(sample_agent_event("prompt-delivered")),
+            ),
+            (
+                "session.prompt-delivery-failed",
+                EventBody::AgentPromptDeliveryFailed(sample_agent_event("prompt-delivery-failed")),
+            ),
+            (
+                "session.stopped",
+                EventBody::AgentStopped(sample_agent_event("stopped")),
+            ),
         ];
 
         for (kind, expected) in cases {
@@ -669,116 +677,6 @@ mod tests {
     }
 
     #[test]
-    fn deserializes_omx_hook_envelope_schema_v1_with_all_context_fields() {
-        let envelope = from_omx_hook_envelope_json(&json!({
-            "schema_version": "1",
-            "event": "notify",
-            "timestamp": "2026-03-31T09:00:00Z",
-            "context": {
-                "normalized_event": "test-failed",
-                "agent_name": "omx",
-                "session_name": "issue-65-event-contract",
-                "session_id": "sess-65",
-                "project": "clawhip",
-                "repo_path": "/repo/clawhip",
-                "branch": "feat/issue-65-event-contract",
-                "issue_number": 65,
-                "pr_number": 72,
-                "pr_url": "https://github.com/Yeachan-Heo/clawhip/pull/72",
-                "command": "cargo test",
-                "tool_name": "Bash",
-                "status": "failed",
-                "summary": "tests failed",
-                "error_summary": "1 test failed",
-                "mention": "@ops"
-            }
-        }))
-        .unwrap();
-
-        match envelope.body {
-            EventBody::AgentTestFailed(body) => {
-                assert_eq!(body.agent_name, "omx");
-                assert_eq!(
-                    body.session_name.as_deref(),
-                    Some("issue-65-event-contract")
-                );
-                assert_eq!(body.session_id.as_deref(), Some("sess-65"));
-                assert_eq!(body.project.as_deref(), Some("clawhip"));
-                assert_eq!(body.repo_path.as_deref(), Some("/repo/clawhip"));
-                assert_eq!(body.branch.as_deref(), Some("feat/issue-65-event-contract"));
-                assert_eq!(body.issue_number, Some(65));
-                assert_eq!(body.pr_number, Some(72));
-                assert_eq!(
-                    body.pr_url.as_deref(),
-                    Some("https://github.com/Yeachan-Heo/clawhip/pull/72")
-                );
-                assert_eq!(body.command.as_deref(), Some("cargo test"));
-                assert_eq!(body.tool_name.as_deref(), Some("Bash"));
-                assert_eq!(body.status, "failed");
-                assert_eq!(body.summary.as_deref(), Some("tests failed"));
-                assert_eq!(body.error_summary.as_deref(), Some("1 test failed"));
-                assert_eq!(body.error_message.as_deref(), Some("1 test failed"));
-                assert_eq!(body.normalized_event.as_deref(), Some("test-failed"));
-                assert_eq!(body.mention.as_deref(), Some("@ops"));
-            }
-            other => panic!("expected AgentTestFailed body, got {other:?}"),
-        }
-    }
-
-    #[test]
-    fn converts_omx_hook_envelope_into_incoming_event() {
-        let event = incoming_event_from_omx_hook_envelope_json(&json!({
-            "schema_version": "1",
-            "event": "notify",
-            "channel": "alerts",
-            "mention": "@ops",
-            "context": {
-                "normalized_event": "pr-created",
-                "agent_name": "omx",
-                "status": "pr-created",
-                "session_name": "issue-65",
-                "pr_number": 91
-            }
-        }))
-        .unwrap();
-
-        assert_eq!(event.kind, "notify");
-        assert_eq!(event.channel.as_deref(), Some("alerts"));
-        assert_eq!(event.mention.as_deref(), Some("@ops"));
-        assert_eq!(
-            event.payload["context"]["normalized_event"],
-            json!("pr-created")
-        );
-    }
-
-    #[test]
-    fn rejects_omx_hook_envelope_without_normalized_event() {
-        let error = from_omx_hook_envelope_json(&json!({
-            "schema_version": "1",
-            "event": "notify",
-            "context": {
-                "agent_name": "omx"
-            }
-        }))
-        .unwrap_err();
-
-        assert!(error.to_string().contains("context.normalized_event"));
-    }
-
-    #[test]
-    fn rejects_unsupported_omx_hook_schema_version() {
-        let error = from_omx_hook_envelope_json(&json!({
-            "schema_version": "2",
-            "context": {
-                "normalized_event": "started"
-            }
-        }))
-        .unwrap_err();
-
-        assert!(error.to_string().contains("unsupported schema_version"));
-    }
-
-    #[test]
     fn reuses_normalized_event_id_when_available() {
         let event = crate::events::normalize_event(IncomingEvent::custom(None, "hello".into()));
         let envelope = from_incoming_event(&event).unwrap();
@@ -804,6 +702,12 @@ mod tests {
             "pr_url": "https://github.com/Yeachan-Heo/clawhip/pull/72",
             "command": "cargo test",
             "tool_name": "Bash",
+            "tmux_session": "issue-65",
+            "tmux_window": "1",
+            "tmux_pane": "%42",
+            "tmux_pane_tty": "/dev/pts/9",
+            "tmux_attached": true,
+            "tmux_client_count": 2,
             "elapsed_secs": 42,
             "summary": "summary",
             "error_summary": "error summary",
@@ -826,6 +730,12 @@ mod tests {
             pr_url: Some("https://github.com/Yeachan-Heo/clawhip/pull/72".into()),
             command: Some("cargo test".into()),
             tool_name: Some("Bash".into()),
+            tmux_session: Some("issue-65".into()),
+            tmux_window: Some("1".into()),
+            tmux_pane: Some("%42".into()),
+            tmux_pane_tty: Some("/dev/pts/9".into()),
+            tmux_attached: Some(true),
+            tmux_client_count: Some(2),
             elapsed_secs: Some(42),
             summary: Some("summary".into()),
             error_summary: Some("error summary".into()),
@@ -846,6 +756,10 @@ mod tests {
             EventBody::AgentTestFinished(_) => "test-finished",
             EventBody::AgentTestFailed(_) => "test-failed",
             EventBody::AgentHandoffNeeded(_) => "handoff-needed",
+            EventBody::AgentPromptSubmitted(_) => "prompt-submitted",
+            EventBody::AgentPromptDelivered(_) => "prompt-delivered",
+            EventBody::AgentPromptDeliveryFailed(_) => "prompt-delivery-failed",
+            EventBody::AgentStopped(_) => "stopped",
             _ => unreachable!(),
         }
     }
@@ -860,5 +774,77 @@ mod tests {
 
         let envelope = from_incoming_event(&event).unwrap();
         assert_eq!(envelope.metadata.priority, EventPriority::High);
+    }
+
+    #[test]
+    fn maps_github_release_published_event() {
+        let event = IncomingEvent::github_release(
+            "published",
+            "Yeachan-Heo/clawhip".into(),
+            "v0.6.0".into(),
+            "clawhip 0.6.0".into(),
+            false,
+            "https://github.com/Yeachan-Heo/clawhip/releases/tag/v0.6.0".into(),
+            Some("Yeachan-Heo".into()),
+            Some("releases".into()),
+        );
+
+        let envelope = from_incoming_event(&event).unwrap();
+        assert_eq!(envelope.source, "github");
+        assert_eq!(envelope.metadata.channel_hint.as_deref(), Some("releases"));
+        assert_eq!(envelope.metadata.priority, EventPriority::High);
+        match envelope.body {
+            EventBody::GitHubReleasePublished(body) => {
+                assert_eq!(body.repo, "Yeachan-Heo/clawhip");
+                assert_eq!(body.tag, "v0.6.0");
+                assert_eq!(body.name, "clawhip 0.6.0");
+                assert!(!body.is_prerelease);
+                assert_eq!(body.actor.as_deref(), Some("Yeachan-Heo"));
+            }
+            other => panic!("expected GitHubReleasePublished, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn maps_github_release_prereleased_event() {
+        let event = IncomingEvent::github_release(
+            "prereleased",
+            "Yeachan-Heo/clawhip".into(),
+            "v0.6.0-rc.1".into(),
+            "clawhip 0.6.0-rc.1".into(),
+            true,
+            "https://github.com/Yeachan-Heo/clawhip/releases/tag/v0.6.0-rc.1".into(),
+            None,
+            None,
+        );
+
+        let envelope = from_incoming_event(&event).unwrap();
+        assert_eq!(envelope.metadata.priority, EventPriority::High);
+        match envelope.body {
+            EventBody::GitHubReleasePrereleased(body) => {
+                assert!(body.is_prerelease);
+                assert_eq!(body.tag, "v0.6.0-rc.1");
+                assert!(body.actor.is_none());
+            }
+            other => panic!("expected GitHubReleasePrereleased, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn maps_github_release_edited_event() {
+        let event = IncomingEvent::github_release(
+            "edited",
+            "Yeachan-Heo/clawhip".into(),
+            "v0.5.4".into(),
+            "clawhip 0.5.4".into(),
+            false,
+            "https://github.com/Yeachan-Heo/clawhip/releases/tag/v0.5.4".into(),
+            Some("Yeachan-Heo".into()),
+            None,
+        );
+
+        let envelope = from_incoming_event(&event).unwrap();
+        assert_eq!(envelope.metadata.priority, EventPriority::Normal);
+        assert!(matches!(envelope.body, EventBody::GitHubReleaseEdited(_)));
     }
 }
