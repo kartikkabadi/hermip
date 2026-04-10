@@ -8,6 +8,7 @@ use crate::events::MessageFormat;
 
 pub const DEFAULT_RETRY_ENTER_COUNT: u32 = 4;
 pub const DEFAULT_RETRY_ENTER_DELAY_MS: u64 = 250;
+pub const DEFAULT_DELIVER_MAX_ENTERS: u32 = crate::hooks::prompt_deliver::DEFAULT_MAX_ENTERS;
 
 #[derive(Debug, Parser)]
 #[command(
@@ -54,6 +55,8 @@ pub enum Commands {
         #[arg(long)]
         message: String,
     },
+    /// Deliver a prompt into an existing hooked tmux-backed Codex/Claude session (including OMC/OMX wrappers).
+    Deliver(DeliverArgs),
     /// Emit an arbitrary event to the local daemon.
     Emit(EmitArgs),
     /// Send git-related events to the local daemon.
@@ -134,6 +137,19 @@ pub enum Commands {
         #[command(subcommand)]
         command: HooksCommands,
     },
+}
+
+#[derive(Debug, Clone, Args)]
+pub struct DeliverArgs {
+    /// Existing tmux session name to target.
+    #[arg(long)]
+    pub session: String,
+    /// Prompt text to submit into the active pane.
+    #[arg(long)]
+    pub prompt: String,
+    /// Maximum Enter presses to attempt before failing.
+    #[arg(long, default_value_t = DEFAULT_DELIVER_MAX_ENTERS)]
+    pub max_enters: u32,
 }
 
 #[derive(Debug, Clone, Args)]
@@ -614,6 +630,28 @@ mod tests {
         assert_eq!(event.template.as_deref(), Some("agent {agent_name}"));
         assert_eq!(event.payload["agent_name"], Value::String("omc".into()));
         assert_eq!(event.payload["elapsed_secs"], Value::from(17));
+    }
+
+    #[test]
+    fn parses_deliver_subcommand() {
+        let cli = Cli::parse_from([
+            "clawhip",
+            "deliver",
+            "--session",
+            "issue-184",
+            "--prompt",
+            "Ship it",
+            "--max-enters",
+            "6",
+        ]);
+
+        let Commands::Deliver(args) = cli.command.expect("deliver command") else {
+            panic!("expected deliver command");
+        };
+
+        assert_eq!(args.session, "issue-184");
+        assert_eq!(args.prompt, "Ship it");
+        assert_eq!(args.max_enters, 6);
     }
 
     #[test]

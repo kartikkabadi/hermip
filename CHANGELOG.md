@@ -8,6 +8,12 @@
 - document `clawhip native hook` as the generic ingress for shared hook payload verification
 - move public guidance to provider-native installation, `.clawhip/project.json`, and additive `.clawhip/hooks/` augmentation
 
+### Highlights
+
+- add `clawhip deliver` for prompt-submit-aware prompt recovery into existing hooked tmux-backed provider sessions
+- validate repo-local hook setup and active Codex/Claude (including OMC/OMX wrapper) panes before retrying Enter
+- record prompt-submit readiness in `.clawhip/state/prompt-submit.json` so delivery can stop once the hook actually fires
+
 ### Upgrade notes
 
 - if you were using wrapper-specific launch flows, migrate to provider-owned hook registration plus `clawhip native hook` for local testing

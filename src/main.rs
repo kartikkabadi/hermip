@@ -69,6 +69,7 @@ async fn real_main() -> Result<()> {
             println!("{}", serde_json::to_string_pretty(&health)?);
             Ok(())
         }
+        Commands::Deliver(args) => crate::hooks::prompt_deliver::run(args).await,
         Commands::Emit(args) => {
             let client = DaemonClient::from_config(config.as_ref());
             send_incoming_event(&client, args.into_event()?).await

@@ -324,7 +324,7 @@ pub fn native_hooks_installed(workdir: &Path) -> bool {
 
 pub fn generated_hook_script() -> &'static str {
     r#"#!/usr/bin/env node
-import { existsSync, readFileSync, readdirSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { basename, dirname, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -518,6 +518,30 @@ function collectTmuxMetadata(input, cwd) {
   return Object.keys(direct).length > 0 ? direct : null;
 }
 
+function maybeWritePromptSubmitState(repoRoot, provider, eventName, input) {
+  const normalizedEvent = String(eventName || '').trim().toLowerCase();
+  if (
+    normalizedEvent !== 'userpromptsubmit' &&
+    normalizedEvent !== 'user-prompt-submit' &&
+    normalizedEvent !== 'prompt-submitted' &&
+    normalizedEvent !== 'session.prompt-submitted'
+  ) {
+    return;
+  }
+
+  try {
+    const path = join(repoRoot, '.clawhip', 'state', 'prompt-submit.json');
+    mkdirSync(dirname(path), { recursive: true });
+    writeFileSync(path, JSON.stringify({
+      observed_at: new Date().toISOString(),
+      provider,
+      event_name: eventName,
+      session_id: input.session_id || input.sessionId || null,
+      turn_id: input.turn_id || input.turnId || null,
+    }, null, 2) + '\n');
+  } catch {}
+}
+
 async function main() {
   const provider = arg('--provider') || process.env.CLAWHIP_PROVIDER || 'unknown';
   const cwd = process.cwd();
@@ -569,6 +593,8 @@ async function main() {
   if (augmentation) {
     payload.augmentation = augmentation;
   }
+
+  maybeWritePromptSubmitState(repoRoot, provider, eventName, input);
 
   spawnSync('clawhip', ['native', 'hook', '--provider', provider], {
     input: JSON.stringify(payload),
@@ -963,6 +989,13 @@ mod tests {
         assert!(script.contains("tmux_session"));
         assert!(script.contains("tmux_client_count"));
         assert!(script.contains("tmux_attached"));
+    }
+
+    #[test]
+    fn generated_hook_script_mentions_prompt_submit_state_recording() {
+        let script = generated_hook_script();
+        assert!(script.contains("maybeWritePromptSubmitState"));
+        assert!(script.contains(".clawhip', 'state', 'prompt-submit.json"));
     }
 
     #[test]
