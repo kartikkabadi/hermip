@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.6.5 - 2026-04-10
+
+### Highlights
+
+- remove the residual dispatch bypass-delivery timing flake with a deterministic test path so CI stays boring under load
+- fix `clawhip tmux new` false-negative launch failures by handing monitoring back to the daemon after successful session creation
+- add `clawhip release preflight` and gate the release workflow on version / Cargo.lock / changelog consistency
+- add `clawhip explain` plus route/delivery provenance output for operator debugging
+
+### Upgrade notes
+
+- crate version is now `0.6.5`
+- existing config remains compatible; no migration required
+
 ## Unreleased
 
 ### Highlights
