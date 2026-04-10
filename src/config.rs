@@ -1385,10 +1385,10 @@ mod tests {
                 ..DaemonConfig::default()
             },
             defaults: DefaultsConfig {
-    channel: Some("general".into()),
-    channel_name: None,
-    format: MessageFormat::Compact,
-},
+                channel: Some("general".into()),
+                channel_name: None,
+                format: MessageFormat::Compact,
+            },
             routes: vec![RouteRule {
                 event: "git.commit".into(),
                 channel: Some("eng".into()),

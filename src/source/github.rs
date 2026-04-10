@@ -860,10 +860,10 @@ mod tests {
 
         let config = AppConfig {
             defaults: DefaultsConfig {
-    channel: Some("fallback".into()),
-    channel_name: None,
-    format: MessageFormat::Compact,
-},
+                channel: Some("fallback".into()),
+                channel_name: None,
+                format: MessageFormat::Compact,
+            },
             routes: vec![RouteRule {
                 event: "github.*".into(),
                 sink: "discord".into(),

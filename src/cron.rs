@@ -986,10 +986,10 @@ mod tests {
     fn sample_config_with_state(schedule: &str, state_file: Option<PathBuf>) -> AppConfig {
         AppConfig {
             defaults: DefaultsConfig {
-    channel: Some("ops".into()),
-    channel_name: None,
-    format: MessageFormat::Compact,
-},
+                channel: Some("ops".into()),
+                channel_name: None,
+                format: MessageFormat::Compact,
+            },
             cron: CronConfig {
                 poll_interval_secs: 30,
                 jobs: vec![CronJob {

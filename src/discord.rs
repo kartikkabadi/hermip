@@ -331,7 +331,11 @@ impl DiscordClient {
         );
         headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
 
-        let bot_client = Some(reqwest::Client::builder().default_headers(headers).build()?);
+        let bot_client = Some(
+            reqwest::Client::builder()
+                .default_headers(headers)
+                .build()?,
+        );
         let webhook_client = reqwest::Client::new();
 
         Ok(Self {
@@ -466,7 +470,11 @@ mod tests {
     }
 
     /// Serve a single HTTP response on a bound TCP listener.
-    async fn serve_once(listener: tokio::net::TcpListener, status_line: &'static str, body: &'static str) {
+    async fn serve_once(
+        listener: tokio::net::TcpListener,
+        status_line: &'static str,
+        body: &'static str,
+    ) {
         let (mut stream, _) = listener.accept().await.unwrap();
         let mut buf = vec![0_u8; 4096];
         let _ = stream.read(&mut buf).await.unwrap();
@@ -488,8 +496,8 @@ mod tests {
             r#"{"id":"1480171113253175356","name":"clawhip-dev","type":0}"#,
         ));
 
-        let client = DiscordClient::for_tests_with_api_base("test-token", format!("http://{addr}"))
-            .unwrap();
+        let client =
+            DiscordClient::for_tests_with_api_base("test-token", format!("http://{addr}")).unwrap();
         let lookup = client.lookup_channel("1480171113253175356").await;
         server.await.unwrap();
 
@@ -512,8 +520,8 @@ mod tests {
             r#"{"message":"Unknown Channel","code":10003}"#,
         ));
 
-        let client = DiscordClient::for_tests_with_api_base("test-token", format!("http://{addr}"))
-            .unwrap();
+        let client =
+            DiscordClient::for_tests_with_api_base("test-token", format!("http://{addr}")).unwrap();
         let lookup = client.lookup_channel("9999999999999999").await;
         server.await.unwrap();
 
@@ -530,8 +538,8 @@ mod tests {
             r#"{"message":"Missing Access","code":50001}"#,
         ));
 
-        let client = DiscordClient::for_tests_with_api_base("test-token", format!("http://{addr}"))
-            .unwrap();
+        let client =
+            DiscordClient::for_tests_with_api_base("test-token", format!("http://{addr}")).unwrap();
         let lookup = client.lookup_channel("1111").await;
         server.await.unwrap();
 
@@ -548,8 +556,8 @@ mod tests {
             r#"{"message":"401: Unauthorized","code":0}"#,
         ));
 
-        let client = DiscordClient::for_tests_with_api_base("bad-token", format!("http://{addr}"))
-            .unwrap();
+        let client =
+            DiscordClient::for_tests_with_api_base("bad-token", format!("http://{addr}")).unwrap();
         let lookup = client.lookup_channel("1111").await;
         server.await.unwrap();
 
@@ -582,8 +590,8 @@ mod tests {
             r#"{"message":"Unknown Channel"}"#,
         ));
 
-        let client = DiscordClient::for_tests_with_api_base("test-token", format!("http://{addr}"))
-            .unwrap();
+        let client =
+            DiscordClient::for_tests_with_api_base("test-token", format!("http://{addr}")).unwrap();
         let _ = client.lookup_channel("1").await;
         server.await.unwrap();
 

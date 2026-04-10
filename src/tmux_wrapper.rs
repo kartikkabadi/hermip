@@ -729,10 +729,10 @@ mod tests {
         };
         let config = AppConfig {
             defaults: DefaultsConfig {
-    channel: Some("default".into()),
-    channel_name: None,
-    format: crate::events::MessageFormat::Compact,
-},
+                channel: Some("default".into()),
+                channel_name: None,
+                format: crate::events::MessageFormat::Compact,
+            },
             routes: vec![RouteRule {
                 event: "tmux.*".into(),
                 filter: BTreeMap::from([("session".into(), "xeroclaw-*".into())]),
@@ -782,10 +782,10 @@ mod tests {
             .to_string();
         let config = AppConfig {
             defaults: DefaultsConfig {
-    channel: Some("default".into()),
-    channel_name: None,
-    format: crate::events::MessageFormat::Compact,
-},
+                channel: Some("default".into()),
+                channel_name: None,
+                format: crate::events::MessageFormat::Compact,
+            },
             routes: vec![
                 RouteRule {
                     event: "tmux.*".into(),
@@ -836,10 +836,10 @@ mod tests {
         };
         let config = AppConfig {
             defaults: DefaultsConfig {
-    channel: Some("default".into()),
-    channel_name: None,
-    format: crate::events::MessageFormat::Compact,
-},
+                channel: Some("default".into()),
+                channel_name: None,
+                format: crate::events::MessageFormat::Compact,
+            },
             routes: vec![RouteRule {
                 event: "tmux.*".into(),
                 filter: BTreeMap::from([("session".into(), "xeroclaw-*".into())]),

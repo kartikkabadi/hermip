@@ -373,9 +373,9 @@ async fn run_setup(args: SetupArgs, config_path: &std::path::Path) -> Result<()>
             .collect();
 
         for entry in &args.bind {
-            let (repo, channel_id) = entry.split_once('=').ok_or_else(|| {
-                format!("--bind must be REPO=CHANNEL_ID, got '{entry}'")
-            })?;
+            let (repo, channel_id) = entry
+                .split_once('=')
+                .ok_or_else(|| format!("--bind must be REPO=CHANNEL_ID, got '{entry}'"))?;
             let repo = repo.trim();
             let channel_id = channel_id.trim();
 
@@ -398,19 +398,18 @@ async fn run_setup(args: SetupArgs, config_path: &std::path::Path) -> Result<()>
                     editable.apply_repo_binding(repo, channel_id, name.as_deref())?;
                 }
                 binding_verify::ChannelLookup::NotFound => {
-                    return Err(format!(
-                        "bind {repo}: channel {channel_id} not found on Discord"
-                    ).into());
+                    return Err(
+                        format!("bind {repo}: channel {channel_id} not found on Discord").into(),
+                    );
                 }
                 binding_verify::ChannelLookup::Forbidden => {
                     return Err(format!(
                         "bind {repo}: bot cannot access channel {channel_id} (403 Forbidden)"
-                    ).into());
+                    )
+                    .into());
                 }
                 binding_verify::ChannelLookup::Unauthorized => {
-                    return Err(
-                        "bind: Discord bot token is invalid (401 Unauthorized)".into()
-                    );
+                    return Err("bind: Discord bot token is invalid (401 Unauthorized)".into());
                 }
                 binding_verify::ChannelLookup::NoToken => {
                     return Err(

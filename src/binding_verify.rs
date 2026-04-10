@@ -18,10 +18,7 @@ use crate::discord::DiscordClient;
 #[serde(tag = "status", rename_all = "snake_case")]
 pub enum ChannelLookup {
     /// Channel exists — `name` is `None` for DM-style channels without a name.
-    Found {
-        id: String,
-        name: Option<String>,
-    },
+    Found { id: String, name: Option<String> },
     /// The channel ID returned 404.
     NotFound,
     /// Bot lacks permission (403).
@@ -265,10 +262,7 @@ impl fmt::Display for BindingAudit {
                     live_name,
                     expected_name,
                 } => {
-                    writeln!(
-                        f,
-                        "(#{live_name}) -- MISMATCH: expected #{expected_name}"
-                    )?;
+                    writeln!(f, "(#{live_name}) -- MISMATCH: expected #{expected_name}")?;
                 }
                 VerdictKind::Resolved {
                     live_name: Some(name),
@@ -556,9 +550,6 @@ mod tests {
             .unwrap();
         assert_eq!(config.routes.len(), 1);
         assert_eq!(config.routes[0].channel.as_deref(), Some("222"));
-        assert_eq!(
-            config.routes[0].channel_name.as_deref(),
-            Some("new-name")
-        );
+        assert_eq!(config.routes[0].channel_name.as_deref(), Some("new-name"));
     }
 }
