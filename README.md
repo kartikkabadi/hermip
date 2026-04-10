@@ -304,6 +304,17 @@ clawhip setup \
 
 Use `clawhip config` to revisit the same bounded preset surface later. For anything outside those five presets—custom `[[routes]]`, Slack routes, monitors, dispatch tuning, cron jobs, or template-heavy routing—edit the TOML file directly.
 
+The bounded `clawhip config` editor should expose exactly these eight actions:
+
+1. Set Discord bot token
+2. Set daemon base URL
+3. Set default channel
+4. Set default format
+5. Set Discord webhook quickstart route
+6. Save and exit
+7. Exit without saving
+8. Print manual config template hint
+
 ### Quickstart-route ownership rules
 
 The webhook quickstart helpers own exactly one canonical wildcard Discord webhook route:
