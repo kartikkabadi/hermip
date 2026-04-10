@@ -442,6 +442,25 @@ pub const CONFIG_EDITOR_MENU_ITEMS: [&str; 8] = [
     "Print manual config template hint",
 ];
 
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct SetupEdits {
+    pub webhook: Option<String>,
+    pub bot_token: Option<String>,
+    pub default_channel: Option<String>,
+    pub default_format: Option<MessageFormat>,
+    pub daemon_base_url: Option<String>,
+}
+
+impl SetupEdits {
+    pub fn is_empty(&self) -> bool {
+        self.webhook.is_none()
+            && self.bot_token.is_none()
+            && self.default_channel.is_none()
+            && self.default_format.is_none()
+            && self.daemon_base_url.is_none()
+    }
+}
+
 fn merge_legacy_discord_field(
     field: &str,
     legacy: Option<String>,
@@ -1024,22 +1043,6 @@ fn prompt_format(default: Option<MessageFormat>) -> Result<MessageFormat> {
         return Ok(default_value);
     }
     MessageFormat::from_label(input.trim())
-}
-
-fn empty_to_none(value: String) -> Option<String> {
-    normalize_text(Some(value))
-}
-
-fn is_canonical_quickstart_route(route: &RouteRule) -> bool {
-    route.event == "*"
-        && route.filter.is_empty()
-        && route.sink == default_sink_name()
-        && route.channel.is_none()
-        && route.slack_webhook.is_none()
-        && route.mention.is_none()
-        && route.template.is_none()
-        && !route.allow_dynamic_tokens
-        && route.format.is_none()
 }
 
 fn normalize_text(value: Option<String>) -> Option<String> {

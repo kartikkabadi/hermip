@@ -30,8 +30,7 @@ use clap::Parser;
 
 use crate::cli::{
     AgentCommands, Cli, Commands, ConfigCommand, CronCommands, GitCommands, GithubCommands,
-    HooksCommands, MemoryCommands, NativeCommands, OmxCommands, PluginCommands, SetupArgs,
-    TmuxCommands,
+    HooksCommands, MemoryCommands, NativeCommands, OmxCommands, PluginCommands, TmuxCommands,
 };
 use crate::client::DaemonClient;
 use crate::config::{AppConfig, SetupEdits};
@@ -307,40 +306,6 @@ async fn real_main() -> Result<()> {
             HooksCommands::Install(args) => hooks::install(args),
         },
         Commands::EnableHook(args) => native_hooks::enable(args),
-    }
-}
-
-fn apply_setup_args(config: &mut AppConfig, args: SetupArgs) -> Result<()> {
-    if let Some(webhook) = args.webhook {
-        config.scaffold_webhook_quickstart(webhook)?;
-    }
-    if let Some(bot_token) = args.bot_token {
-        config.set_discord_bot_token(require_non_empty_setup_value("--bot-token", bot_token)?);
-    }
-    if let Some(default_channel) = args.default_channel {
-        config.set_default_channel(require_non_empty_setup_value(
-            "--default-channel",
-            default_channel,
-        )?);
-    }
-    if let Some(default_format) = args.default_format {
-        config.set_default_format(default_format);
-    }
-    if let Some(daemon_base_url) = args.daemon_base_url {
-        config.set_daemon_base_url(require_non_empty_setup_value(
-            "--daemon-base-url",
-            daemon_base_url,
-        )?);
-    }
-    Ok(())
-}
-
-fn require_non_empty_setup_value(flag: &str, value: String) -> Result<String> {
-    let trimmed = value.trim();
-    if trimmed.is_empty() {
-        Err(format!("{flag} requires a non-empty value").into())
-    } else {
-        Ok(trimmed.to_string())
     }
 }
 
