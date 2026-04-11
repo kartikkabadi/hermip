@@ -14,8 +14,8 @@ pub const DEFAULT_MAX_ENTERS: u32 = 4;
 const DEFAULT_TUI_TIMEOUT: Duration = Duration::from_secs(30);
 const DEFAULT_POLL_INTERVAL: Duration = Duration::from_millis(500);
 const DEFAULT_VERIFY_DELAY: Duration = Duration::from_millis(350);
-const PROMPT_SUBMIT_MARKER: &str = ".clawhip/state/prompt-submit.json";
-const NATIVE_HOOK_SCRIPT: &str = ".clawhip/hooks/native-hook.mjs";
+const PROMPT_SUBMIT_MARKER: &str = ".hermip/state/prompt-submit.json";
+const NATIVE_HOOK_SCRIPT: &str = ".hermip/hooks/native-hook.mjs";
 const PROMPT_CHARS: &[char] = &['$', '%', '>', '#', '❯', '›'];
 const TARGET_PANE_FORMAT: &str =
     "#{session_name}\t#{pane_id}\t#{pane_pid}\t#{pane_current_command}\t#{pane_current_path}";
@@ -216,11 +216,11 @@ fn detect_hook_setup(cwd: &Path) -> Result<HookSetup> {
 
         if has_claude_prompt_submit_hook(directory) && has_native_script {
             providers.push(ProviderKind::Omc);
-            sources.push(".claude/settings.json + .clawhip/hooks/native-hook.mjs");
+            sources.push(".claude/settings.json + .hermip/hooks/native-hook.mjs");
         }
         if has_codex_prompt_submit_hook(directory) && has_native_script {
             providers.push(ProviderKind::Omx);
-            sources.push(".codex/hooks.json + .clawhip/hooks/native-hook.mjs");
+            sources.push(".codex/hooks.json + .hermip/hooks/native-hook.mjs");
         }
         if has_omx_prompt_submit_hook(directory) && !providers.contains(&ProviderKind::Omx) {
             providers.push(ProviderKind::Omx);
@@ -324,7 +324,7 @@ fn has_omx_prompt_submit_hook(root: &Path) -> bool {
 fn command_mentions_clawhip(command: &str) -> bool {
     let normalized = command.trim().to_ascii_lowercase();
     normalized.contains("clawhip native hook")
-        || normalized.contains(".clawhip/hooks/native-hook.mjs")
+        || normalized.contains(".hermip/hooks/native-hook.mjs")
         || normalized.contains("native-hook.mjs")
 }
 
@@ -602,16 +602,16 @@ mod tests {
         let repo = tempdir.path().join("repo");
         let nested = repo.join("src/bin");
         fs::create_dir_all(repo.join(".codex")).expect("create codex dir");
-        fs::create_dir_all(repo.join(".clawhip/hooks")).expect("create hook dir");
+        fs::create_dir_all(repo.join(".hermip/hooks")).expect("create hook dir");
         fs::create_dir_all(&nested).expect("create nested dir");
         fs::write(
             repo.join(".codex/hooks.json"),
-            r#"{"hooks":{"UserPromptSubmit":[{"hooks":[{"type":"command","command":"node ./.clawhip/hooks/native-hook.mjs --provider codex"}]}]}}"#,
+            r#"{"hooks":{"UserPromptSubmit":[{"hooks":[{"type":"command","command":"node ./.hermip/hooks/native-hook.mjs --provider codex"}]}]}}"#,
         )
         .expect("write codex hooks");
         fs::write(
-            repo.join(".clawhip/hooks/native-hook.mjs"),
-            "function maybeWritePromptSubmitState() { return '.clawhip/state/prompt-submit.json'; }\n",
+            repo.join(".hermip/hooks/native-hook.mjs"),
+            "function maybeWritePromptSubmitState() { return '.hermip/state/prompt-submit.json'; }\n",
         )
         .expect("write native hook");
 
@@ -625,15 +625,15 @@ mod tests {
         let tempdir = tempdir().expect("tempdir");
         let repo = tempdir.path().join("repo");
         fs::create_dir_all(repo.join(".claude")).expect("create claude dir");
-        fs::create_dir_all(repo.join(".clawhip/hooks")).expect("create hook dir");
+        fs::create_dir_all(repo.join(".hermip/hooks")).expect("create hook dir");
         fs::write(
             repo.join(".claude/settings.json"),
-            r#"{"hooks":{"UserPromptSubmit":[{"hooks":[{"type":"command","command":"node ./.clawhip/hooks/native-hook.mjs --provider claude-code"}]}]}}"#,
+            r#"{"hooks":{"UserPromptSubmit":[{"hooks":[{"type":"command","command":"node ./.hermip/hooks/native-hook.mjs --provider claude-code"}]}]}}"#,
         )
         .expect("write settings");
         fs::write(
-            repo.join(".clawhip/hooks/native-hook.mjs"),
-            "function maybeWritePromptSubmitState() { return '.clawhip/state/prompt-submit.json'; }\n",
+            repo.join(".hermip/hooks/native-hook.mjs"),
+            "function maybeWritePromptSubmitState() { return '.hermip/state/prompt-submit.json'; }\n",
         )
         .expect("write native hook");
 
@@ -689,15 +689,15 @@ mod tests {
         let tempdir = tempdir().expect("tempdir");
         let workdir = tempdir.path().join("repo");
         fs::create_dir_all(workdir.join(".codex")).expect("create codex dir");
-        fs::create_dir_all(workdir.join(".clawhip/hooks")).expect("create hook dir");
+        fs::create_dir_all(workdir.join(".hermip/hooks")).expect("create hook dir");
         fs::write(
             workdir.join(".codex/hooks.json"),
-            r#"{"hooks":{"UserPromptSubmit":[{"hooks":[{"type":"command","command":"node ./.clawhip/hooks/native-hook.mjs --provider codex"}]}]}}"#,
+            r#"{"hooks":{"UserPromptSubmit":[{"hooks":[{"type":"command","command":"node ./.hermip/hooks/native-hook.mjs --provider codex"}]}]}}"#,
         )
         .expect("write codex hooks");
         fs::write(
-            workdir.join(".clawhip/hooks/native-hook.mjs"),
-            "function maybeWritePromptSubmitState() { return '.clawhip/state/prompt-submit.json'; }\n",
+            workdir.join(".hermip/hooks/native-hook.mjs"),
+            "function maybeWritePromptSubmitState() { return '.hermip/state/prompt-submit.json'; }\n",
         )
         .expect("write native hook");
 

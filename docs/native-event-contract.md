@@ -58,7 +58,7 @@ fields for routing:
 
 ### Notes
 
-- `.clawhip/project.json` is the preferred place for project identity that should survive across
+- `.hermip/project.json` is the preferred place for project identity that should survive across
   providers.
 - `project` / `repo_name` should be the authority for project-level routing.
 - `directory` and `worktree_path` are base context, not optional decorations.
@@ -66,7 +66,7 @@ fields for routing:
 
 ## Augmentation model
 
-`.clawhip/hooks/` can enrich the base payload, but only additively.
+`.hermip/hooks/` can enrich the base payload, but only additively.
 
 Allowed augmentation patterns:
 

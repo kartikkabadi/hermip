@@ -1,3 +1,0 @@
-name = "claude-code"
-description = "Shell bridge for Claude Code-specific integrations"
-bridge = "bridge.sh"

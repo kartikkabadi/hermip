@@ -1,3 +1,0 @@
-name = "codex"
-description = "Shell bridge for Codex-specific integrations"
-bridge = "bridge.sh"

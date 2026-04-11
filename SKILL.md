@@ -34,7 +34,7 @@ Expected automation flow:
 2. run `./install.sh`
 3. read this `SKILL.md`
 4. attach skill
-5. scaffold `~/.clawhip/config.toml`
+5. scaffold `~/.hermip/config.toml`
 6. start daemon
 7. run live verification presets
 
@@ -91,7 +91,7 @@ Setup:
 2. Create a new application (e.g. "clawhip-notifier" or "CCNotifier")
 3. Create a bot, copy the token
 4. Invite the bot to your server with Send Messages permission
-5. Use this token in `~/.clawhip/config.toml`:
+5. Use this token in `~/.hermip/config.toml`:
 
 ```toml
 [discord]

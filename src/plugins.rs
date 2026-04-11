@@ -121,7 +121,7 @@ fn bundled_plugins_dir() -> PathBuf {
 
 fn app_plugins_dir() -> PathBuf {
     PathBuf::from(env::var("HOME").unwrap_or_else(|_| ".".to_string()))
-        .join(".clawhip")
+        .join(".hermip")
         .join("plugins")
 }
 

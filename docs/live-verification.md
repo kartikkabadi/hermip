@@ -85,7 +85,7 @@ printf '%s\n' '{
 
 5. Confirm both providers normalize into the same shared route family.
 6. Send representative payloads for `PreToolUse`, `PostToolUse`, `UserPromptSubmit`, and `Stop`.
-7. Confirm additive augmentation still preserves the base routing keys when `.clawhip/hooks/` is enabled.
+7. Confirm additive augmentation still preserves the base routing keys when `.hermip/hooks/` is enabled.
 
 ### tmux presets
 

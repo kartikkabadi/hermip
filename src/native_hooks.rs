@@ -7,9 +7,9 @@ use serde_json::{Map, Value, json};
 use crate::Result;
 
 #[allow(dead_code)]
-pub const CLAWHIP_DIR: &str = ".clawhip";
-pub const CLAWHIP_PROJECT_FILE: &str = ".clawhip/project.json";
-pub const HOOK_SCRIPT: &str = ".clawhip/hooks/native-hook.mjs";
+pub const CLAWHIP_DIR: &str = ".hermip";
+pub const CLAWHIP_PROJECT_FILE: &str = ".hermip/project.json";
+pub const HOOK_SCRIPT: &str = ".hermip/hooks/native-hook.mjs";
 #[allow(dead_code)]
 pub const PROJECT_METADATA_RELATIVE_PATH: &str = CLAWHIP_PROJECT_FILE;
 #[allow(dead_code)]
@@ -380,7 +380,7 @@ function runGit(args, cwd) {
 }
 
 function loadProjectMetadata(root) {
-  const path = join(root, '.clawhip', 'project.json');
+  const path = join(root, '.hermip', 'project.json');
   if (!existsSync(path)) return null;
   return parseJson(readFileSync(path, 'utf8'), null);
 }
@@ -433,7 +433,7 @@ function mergeAdditive(base, extra) {
 }
 
 async function collectAugmentation(root, payload) {
-  const augmentDir = join(root, '.clawhip/hooks/augment');
+  const augmentDir = join(root, '.hermip/hooks/augment');
   if (!existsSync(augmentDir)) return null;
 
   let merged = {};
@@ -557,7 +557,7 @@ function maybeWritePromptSubmitState(repoRoot, provider, eventName, input) {
 
   try {
     const promptText = input.prompt || input.user_prompt || input.message || '';
-    const path = join(repoRoot, '.clawhip', 'state', 'prompt-submit.json');
+    const path = join(repoRoot, '.hermip', 'state', 'prompt-submit.json');
     mkdirSync(dirname(path), { recursive: true });
     writeFileSync(path, JSON.stringify({
       observed_at: new Date().toISOString(),
@@ -576,7 +576,7 @@ function maybeEnrichStopEvent(repoRoot, payload, eventName) {
     return;
   }
   try {
-    const path = join(repoRoot, '.clawhip', 'state', 'prompt-submit.json');
+    const path = join(repoRoot, '.hermip', 'state', 'prompt-submit.json');
     if (!existsSync(path)) return;
     const raw = readFileSync(path, 'utf8');
     const state = parseJson(raw, null);
@@ -983,7 +983,7 @@ mod tests {
     #[test]
     fn loads_project_metadata_from_project_json() {
         let dir = tempdir().expect("tempdir");
-        fs::create_dir_all(dir.path().join(".clawhip")).unwrap();
+        fs::create_dir_all(dir.path().join(".hermip")).unwrap();
         fs::write(
             dir.path().join(CLAWHIP_PROJECT_FILE),
             serde_json::to_string_pretty(&json!({
@@ -1043,7 +1043,7 @@ mod tests {
     #[test]
     fn generated_hook_script_mentions_augment_pipeline() {
         let script = generated_hook_script();
-        assert!(script.contains(".clawhip/hooks/augment"));
+        assert!(script.contains(".hermip/hooks/augment"));
         assert!(script.contains("clawhip', ['native', 'hook'"));
     }
 
@@ -1084,7 +1084,7 @@ mod tests {
     fn generated_hook_script_mentions_prompt_submit_state_recording() {
         let script = generated_hook_script();
         assert!(script.contains("maybeWritePromptSubmitState"));
-        assert!(script.contains(".clawhip', 'state', 'prompt-submit.json"));
+        assert!(script.contains(".hermip', 'state', 'prompt-submit.json"));
     }
 
     #[test]

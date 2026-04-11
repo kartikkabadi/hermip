@@ -1,0 +1,14 @@
+commands:
+  install: cargo build --release
+  build: cargo build --release
+  test: cargo test
+  typecheck: cargo clippy -- -D warnings
+  lint: cargo fmt --check
+
+services:
+  hermip:
+    start: hermip daemon start --config hermip.toml
+    stop: hermip daemon stop
+    healthcheck: curl -sf http://localhost:25294/health
+    port: 25294
+    depends_on: []

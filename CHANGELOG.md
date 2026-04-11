@@ -47,13 +47,13 @@
 
 - replace provider-specific wrapper/launcher docs with the shared provider-native Codex + Claude hook surface
 - document `clawhip native hook` as the generic ingress for shared hook payload verification
-- move public guidance to provider-native installation, `.clawhip/project.json`, and additive `.clawhip/hooks/` augmentation
+- move public guidance to provider-native installation, `.hermip/project.json`, and additive `.hermip/hooks/` augmentation
 
 ### Highlights
 
 - add `clawhip deliver` for prompt-submit-aware prompt recovery into existing hooked tmux-backed provider sessions
 - validate repo-local hook setup and active Codex/Claude (including OMC/OMX wrapper) panes before retrying Enter
-- record prompt-submit readiness in `.clawhip/state/prompt-submit.json` so delivery can stop once the hook actually fires
+- record prompt-submit readiness in `.hermip/state/prompt-submit.json` so delivery can stop once the hook actually fires
 
 ### Upgrade notes
 

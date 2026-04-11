@@ -414,7 +414,7 @@ pub fn default_config_path() -> PathBuf {
         return PathBuf::from(override_path);
     }
     let home = env::var("HOME").unwrap_or_else(|_| ".".to_string());
-    PathBuf::from(home).join(".clawhip").join("config.toml")
+    PathBuf::from(home).join(".hermip").join("config.toml")
 }
 
 fn default_bind_host() -> String {

@@ -12,13 +12,13 @@ pub const DEFAULT_DELIVER_MAX_ENTERS: u32 = crate::hooks::prompt_deliver::DEFAUL
 
 #[derive(Debug, Parser)]
 #[command(
-    name = "clawhip",
+    name = "hermip",
     version,
     about = "Daemon-first event gateway for Discord"
 )]
 pub struct Cli {
     /// Override the config file path.
-    #[arg(long, global = true, env = "CLAWHIP_CONFIG")]
+    #[arg(long, global = true, env = "HERMIP_CONFIG")]
     pub config: Option<PathBuf>,
 
     #[command(subcommand)]

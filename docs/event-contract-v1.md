@@ -41,7 +41,7 @@ After clawhip normalizes a provider payload, these base routing fields are the v
 | `directory` | when known | Provider working directory at hook time. |
 | `worktree_path` | when known | Worktree/repo path used for routing and context. |
 | `repo_name` | when known | Repository identity for stable routing. |
-| `project` | when known | Project identity, preferably sourced from `.clawhip/project.json`. |
+| `project` | when known | Project identity, preferably sourced from `.hermip/project.json`. |
 | `session_id` | no | Provider/session correlation identifier. |
 | `branch` | when known | Git branch when available. |
 | `tool_name` | tool events | Tool identifier for pre/post tool hooks. |
@@ -51,7 +51,7 @@ After clawhip normalizes a provider payload, these base routing fields are the v
 
 ## Augmentation rules
 
-`.clawhip/hooks/` may only add data to the normalized base contract.
+`.hermip/hooks/` may only add data to the normalized base contract.
 
 Allowed:
 

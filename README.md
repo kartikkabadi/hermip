@@ -63,8 +63,8 @@ Recommended installation model:
 
 - install provider-native hooks at project or global scope
 - keep provider config in the provider-owned config files
-- keep routing metadata in `.clawhip/project.json`
-- use `.clawhip/hooks/` only for additive augmentation such as frontmatter or recent context
+- keep routing metadata in `.hermip/project.json`
+- use `.hermip/hooks/` only for additive augmentation such as frontmatter or recent context
 
 clawhip still pairs well with tmux when you want keyword/stale monitoring, but tmux is now
 optional and no longer the primary hook-registration surface.
@@ -77,7 +77,7 @@ clawhip deliver --session <tmux-session> --prompt "..." --max-enters 4
 
 `clawhip deliver` validates repo-local prompt-submit hook setup, confirms the target pane is an
 active Codex/Claude (including OMC/OMX wrapper) session, then retries Enter until
-`.clawhip/state/prompt-submit.json` changes or the bounded retry limit is reached.
+`.hermip/state/prompt-submit.json` changes or the bounded retry limit is reached.
 
 ## Recipes
 
@@ -480,7 +480,7 @@ Stable routing metadata (when available):
 
 Augmentation rules:
 - provider input + clawhip project metadata define the immutable base contract
-- `.clawhip/hooks/` scripts may only add fields or enrich message/context
+- `.hermip/hooks/` scripts may only add fields or enrich message/context
 - augmenters must not remove or overwrite base routing keys
 
 Route guidance:
@@ -661,7 +661,7 @@ Verification:
 Config file:
 
 ```text
-~/.clawhip/config.toml
+~/.hermip/config.toml
 ```
 
 Route model:

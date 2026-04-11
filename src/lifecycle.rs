@@ -139,7 +139,7 @@ fn ensure_config_dir() -> Result<()> {
 }
 
 fn config_dir() -> PathBuf {
-    PathBuf::from(env::var("HOME").unwrap_or_else(|_| ".".to_string())).join(".clawhip")
+    PathBuf::from(env::var("HOME").unwrap_or_else(|_| ".".to_string())).join(".hermip")
 }
 
 fn cargo_bin_dir() -> PathBuf {

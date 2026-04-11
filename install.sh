@@ -154,7 +154,7 @@ MSG
 
 sync_plugins() {
   local source_dir="$REPO_ROOT/plugins"
-  local target_dir="$HOME/.clawhip/plugins"
+  local target_dir="$HOME/.hermip/plugins"
 
   if [[ ! -d "$source_dir" ]]; then
     return 0
@@ -184,7 +184,7 @@ setup_quick_start() {
   local binary_path
   binary_path="$(installed_binary_path)" || return 0
 
-  local config_path="$HOME/.clawhip/config.toml"
+  local config_path="$HOME/.hermip/config.toml"
   if [[ -f "$config_path" ]]; then
     log "existing config found at $config_path; skipping quick-start scaffold"
     return 0
@@ -202,7 +202,7 @@ setup_quick_start() {
     log "webhook config scaffolded at $config_path"
   else
     log "recommended quick start: clawhip setup --webhook 'https://discord.com/api/webhooks/...'"
-    log "bot-token mode is still supported via ~/.clawhip/config.toml"
+    log "bot-token mode is still supported via ~/.hermip/config.toml"
   fi
 }
 
@@ -229,8 +229,8 @@ main() {
     install_from_source
   fi
 
-  mkdir -p "$HOME/.clawhip"
-  log "ensured config dir $HOME/.clawhip"
+  mkdir -p "$HOME/.hermip"
+  log "ensured config dir $HOME/.hermip"
   sync_plugins
   log "next: read SKILL.md and attach the skill surface"
   setup_quick_start

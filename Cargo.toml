@@ -1,10 +1,10 @@
 [package]
-name = "clawhip"
+name = "hermip"
 version = "0.6.6"
 edition = "2024"
 description = "Event-to-channel notification router for Discord — bypass gateway sessions, just events in, messages out"
 license = "MIT"
-repository = "https://github.com/Yeachan-Heo/clawhip"
+repository = "https://github.com/FactoryDroid/hermip"
 keywords = ["discord", "notifications", "tmux", "github", "devops"]
 categories = ["command-line-utilities", "development-tools"]
 
