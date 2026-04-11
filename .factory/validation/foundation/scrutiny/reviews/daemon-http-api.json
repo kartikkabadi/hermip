@@ -1,0 +1,50 @@
+{
+  "featureId": "daemon-http-api",
+  "reviewedAt": "2026-04-11T15:45:00Z",
+  "commitId": "dcad7f5",
+  "transcriptSkeletonReviewed": true,
+  "diffReviewed": true,
+  "status": "pass",
+  "codeReview": {
+    "summary": "The daemon HTTP API implementation provides a working Axum-based HTTP server with GET /health (returns 200 with {\"status\": \"ok\"}), POST /api/event (returns 202 for valid JSON with application/json content-type, 415 for wrong content-type, 400 for invalid payloads), POST /native/hook for provider-specific events, and proper 404 handling for unknown routes. Signal handling with SIGTERM graceful shutdown is implemented. The daemon binds to the configured port and port conflicts produce clear errors. The implementation passes all relevant tests including content-type validation, event acceptance, and invalid request resilience. The only concern is that the Content-Type rejection returns 415 (UNSUPPORTED_MEDIA_TYPE) which is correct per the HTTP spec and feature spec (VAL-DAEMON-004 allows 415 or 400).",
+    "issues": [
+      {
+        "file": "src/daemon.rs",
+        "line": 103,
+        "severity": "non_blocking",
+        "description": "POST /native/hook endpoint exists alongside POST /api/event. This is a legacy compatibility endpoint for Codex/Claude native hooks. While it doesn't break anything, it references provider-specific logic (native_hooks) that might need updating for the Hermes provider context."
+      },
+      {
+        "file": "src/daemon.rs",
+        "line": 100,
+        "severity": "non_blocking",
+        "description": "Three routes accept POST events: /event, /api/event, and /events. The /event and /events routes appear to be backward-compatibility aliases. These should be documented as legacy routes that may be deprecated."
+      },
+      {
+        "file": "src/daemon.rs",
+        "line": 135,
+        "severity": "non_blocking",
+        "description": "The shutdown signal handler uses tokio::signal::ctrl_c() and on SIGTERM signal. There is no SIGHUP handler for config hot-reload (VAL-CROSS-005). This may be a future milestone requirement."
+      }
+    ]
+  },
+  "sharedStateObservations": [
+    {
+      "area": "knowledge",
+      "observation": "The daemon routes POST events to three paths (/event, /api/event, /events) for backward compatibility. The /api/event path is the canonical endpoint. The /event and /events paths are legacy aliases.",
+      "evidence": "src/daemon.rs lines 100-101: .route(\"/event\", post(post_event)).route(\"/api/event\", post(post_event)).route(\"/events\", post(post_event))"
+    },
+    {
+      "area": "knowledge",
+      "observation": "Content-Type validation returns 415 Unsupported Media Type for non-JSON content. This is consistent with VAL-DAEMON-004 which allows '415 or 400'.",
+      "evidence": "src/daemon.rs line 232-239: returns StatusCode::UNSUPPORTED_MEDIA_TYPE for non-JSON content-type"
+    },
+    {
+      "area": "knowledge",
+      "observation": "The POST /api/event handler normalizes incoming events (including unknown sources to 'custom') before validation, consistent with the permissive design in the feature spec.",
+      "evidence": "src/daemon.rs line 241: accept_event(&state, normalize_event(event)).await — normalize_event is called before from_incoming_event validation"
+    }
+  ],
+  "addressesFailureFrom": null,
+  "summary": "The daemon HTTP API is well-implemented with proper content-type validation (415 for non-JSON), 202 acceptance for valid events, 400 for invalid payloads, 200 health check, and 404 for unknown routes. Graceful shutdown via SIGTERM is implemented. Port binding works correctly with clear error messages on conflicts. Test coverage is solid with tests for content-type rejection, event acceptance, native hook events, and health payloads. The only notable items are legacy compatibility routes (/event, /events) and the absence of SIGHUP hot-reload handling, which is expected for a future milestone."
+}

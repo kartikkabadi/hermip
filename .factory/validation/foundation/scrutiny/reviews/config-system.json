@@ -1,0 +1,78 @@
+{
+  "featureId": "config-system",
+  "reviewedAt": "2026-04-11T14:30:00Z",
+  "commitId": "2370c1b",
+  "transcriptSkeletonReviewed": true,
+  "diffReviewed": true,
+  "status": "fail",
+  "codeReview": {
+    "summary": "The config system implementation covers the core requirements: TOML loading from hermip.toml (CWD) with global fallback (~/.config/hermip/hermip.toml), --config flag via HERMIP_CONFIG env var, HERMIP_* environment variable overrides with highest precedence, backward-compatible legacy [discord] format migration, sensible defaults, and improved TOML error messages. However, there are two blocking issues: (1) secrets masking in `config show` output — the mission AGENTS.md explicitly requires 'Mask them in config show output' for bot tokens and webhook URLs, but `hermip config show` uses `to_pretty_toml()` which serializes all secrets in plaintext; (2) the `apply_hermip_env_overrides()` function directly calls `env::var()` making it untestable in unit tests without polluting the process environment, and there are no unit tests for env var override behavior. Additionally, several non-blocking issues exist around incomplete env var migration, missing SIGHUP hot-reload, and test coverage gaps.",
+    "issues": [
+      {
+        "file": "src/main.rs",
+        "line": 305,
+        "severity": "blocking",
+        "description": "Security: `hermip config show` outputs the full config via `to_pretty_toml()` without masking secrets. Bot tokens (providers.discord.bot_token), webhook URLs (routes[].webhook, routes[].slack_webhook), and GitHub tokens (monitors.github_token) are printed in plaintext. The mission AGENTS.md security requirements explicitly state: 'Secrets in config: Hermip config contains Discord bot tokens, Discord webhook URLs, and Slack webhook URLs. These must NEVER be logged, printed in error messages, or exposed via the HTTP API. Mask them in config show output.'"
+      },
+      {
+        "file": "src/config.rs",
+        "line": 582,
+        "severity": "blocking",
+        "description": "The `apply_hermip_env_overrides()` method directly calls `env::var()` instead of accepting a generic env getter function (like `effective_token_with()` and `discord_token_source_with()` do with `F: FnMut(&str) -> Option<String>`). This makes the function untestable in unit tests without actually setting environment variables, which causes test interference. No unit tests exist for HERMIP_* env var overrides — the handoff only claims 'manual binary testing' for this critical feature path."
+      },
+      {
+        "file": "src/config.rs",
+        "line": 1088,
+        "severity": "non_blocking",
+        "description": "Inconsistent env var naming: `daemon_base_url()` still reads `CLAWHIP_DAEMON_URL` rather than `HERMIP_DAEMON_URL`. The new HERMIP_* overrides added `HERMIP_DAEMON_BASE_URL` for the TOML field, but the `daemon_base_url()` method (used by the daemon to determine its own URL) only reads the legacy `CLAWHIP_DAEMON_URL` env var. This creates a confusing naming inconsistency where HERMIP_DAEMON_BASE_URL overrides the TOML config but is NOT read by daemon_base_url(), which instead reads CLAWHIP_DAEMON_URL. The same applies to `monitor_github_token()` reading `CLAWHIP_GITHUB_TOKEN` instead of `HERMIP_GITHUB_TOKEN`."
+      },
+      {
+        "file": "src/config.rs",
+        "line": 410,
+        "severity": "non_blocking",
+        "description": "Missing SIGHUP hot-reload: The feature description mentions 'Config hot-reload support (SIGHUP)' but no implementation exists. The daemon signal handler (src/daemon.rs:135) only handles SIGINT (ctrl_c) and SIGTERM, with no SIGHUP handler for config reload. This may be a future requirement rather than part of this feature scope, but is worth noting."
+      },
+      {
+        "file": "src/config.rs",
+        "line": 2055,
+        "severity": "non_blocking",
+        "description": "Test coverage gap: No unit test for VAL-CONFIG-002 (global fallback to ~/.config/hermip/hermip.toml when no local config) or VAL-CONFIG-003 (local config takes precedence over global). These are difficult to unit test due to filesystem dependencies, but at minimum a comment or integration test marker should indicate this gap."
+      },
+      {
+        "file": "src/config.rs",
+        "line": 2069,
+        "severity": "non_blocking",
+        "description": "The invalid_toml_produces_error_with_file_path test only checks for filename presence in the error message, not for line number. The feature description requires 'clear error messages for invalid TOML (file path and line number)'. The current error messages use `format!(\"failed to parse config file {}: {e}\", path.display())` which includes the toml crate's error output (which does include line/column info in most cases), but the test does not verify line number inclusion."
+      }
+    ]
+  },
+  "sharedStateObservations": [
+    {
+      "area": "conventions",
+      "observation": "The mission AGENTS.md security requirements section states 'Mask them in config show output' for secrets (bot tokens, webhook URLs, GitHub tokens), but this convention is not reflected in the implementation. The `to_pretty_toml()` method and the `config show` command output plaintext secrets. This should be tracked as a security convention that the config show path must mask secrets.",
+      "evidence": "src/main.rs:305 calls config.to_pretty_toml() which serializes all fields including providers.discord.bot_token, routes[].webhook, and monitors.github_token without masking. AGENTS.md line 'Mask them in config show output' explicitly requires this."
+    },
+    {
+      "area": "conventions",
+      "observation": "The codebase uses two different patterns for env var overrides: (1) a dependency-injected `with<F>` pattern (see effective_token_with, discord_token_source_with) that makes unit testing possible, and (2) direct `env::var()` calls (see apply_hermip_env_overrides, daemon_base_url, monitor_github_token). The new HERMIP_* overrides use the untestable direct pattern, which is inconsistent with the established convention.",
+      "evidence": "src/config.rs:582-621 uses direct env::var() calls. src/config.rs:497-524 uses the injectable F pattern for effective_token_with and discord_token_source_with."
+    },
+    {
+      "area": "conventions",
+      "observation": "Environment variable naming convention is split: new override vars use HERMIP_ prefix (HERMIP_DAEMON_PORT, HERMIP_DAEMON_BASE_URL, etc.) but runtime accessor methods still use CLAWHIP_ prefix (CLAWHIP_DAEMON_URL, CLAWHIP_GITHUB_TOKEN, CLAWHIP_DISCORD_API_BASE, CLAWHIP_DISCORD_BOT_TOKEN, CLAWHIP_TMUX_BIN, CLAWHIP_GIT_BIN, CLAWHIP_PLUGIN_DIR, CLAWHIP_SKIP_STAR_PROMPT). AGENTS.md doesn't document the naming convention for these legacy env vars or the migration plan.",
+      "evidence": "src/config.rs:1088 reads CLAWHIP_DAEMON_URL, src/config.rs:1095 reads CLAWHIP_GITHUB_TOKEN, src/config.rs:475 lists CLAWHIP_DISCORD_BOT_TOKEN in DISCORD_TOKEN_ENV_VARS, src/discord.rs:75 reads CLAWHIP_DISCORD_API_BASE, src/lifecycle.rs:12 uses CLAWHIP_SKIP_STAR_PROMPT"
+    },
+    {
+      "area": "skills",
+      "observation": "The rust-worker skill was followed successfully (skillFeedback.followedProcedure: true). No skill gaps identified.",
+      "evidence": "Handoff skillFeedback section confirms procedures were followed without deviations."
+    },
+    {
+      "area": "services",
+      "observation": "No gaps identified. The services.yaml correctly documents the hermip daemon start command with --config flag.",
+      "evidence": ".factory/services.yaml includes hermip service with start command 'hermip daemon start --config hermip.toml' which aligns with the new HERMIP_CONFIG env var and --config CLI flag."
+    }
+  ],
+  "addressesFailureFrom": null,
+  "summary": "The config system implementation covers the core feature requirements (TOML loading, local/global fallback, --config flag, HERMIP_* env overrides, legacy [discord] compat, defaults, error messages) but has two blocking issues: (1) `hermip config show` outputs secrets in plaintext without masking, violating the security requirement in AGENTS.md; (2) the HERMIP_* env override function is untestable due to direct env::var() calls and has zero unit test coverage. Non-blocking issues include inconsistent env var naming (HERMIP_ vs CLAWHIP_ prefix), no SIGHUP hot-reload support, and incomplete test coverage for global fallback and local-precedence scenarios."
+}

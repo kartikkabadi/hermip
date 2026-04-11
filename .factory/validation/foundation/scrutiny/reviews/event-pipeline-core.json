@@ -1,0 +1,73 @@
+{
+  "featureId": "event-pipeline-core",
+  "reviewedAt": "2026-04-11T15:30:00Z",
+  "commitId": "2370c1b",
+  "transcriptSkeletonReviewed": true,
+  "diffReviewed": true,
+  "status": "fail",
+  "codeReview": {
+    "summary": "The event pipeline core is largely a pre-existing implementation from the ClawHip port that was verified as functional by the worker (402 tests passing, clippy clean, release build succeeds). The pipeline components — typed event model, sources (git/github/tmux/workspace), dispatcher, router, renderers, and sinks — are all present and working. However, there are several review findings: (1) VAL-SOURCE-006 (reject invalid sources) is NOT implemented; unknown sources are permissively normalized to 'custom', (2) the Slack Webhook sink lacks retry/backoff/circuit-breaker unlike the Discord sink, (3) the {sh:...} dynamic token system executes arbitrary shell commands without sandboxing or allowlisting, (4) multiple environment variables still use the CLAWHIP_ prefix rather than HERMIP_, and (5) the dead-letter queue entries are only logged to stderr — no persistence or recovery mechanism.",
+    "issues": [
+      {
+        "file": "src/event/compat.rs",
+        "line": 130,
+        "severity": "blocking",
+        "description": "VAL-SOURCE-006 requires invalid source events to be 'rejected with descriptive errors listing valid sources'. Instead, unknown event types are normalized to EventBody::Custom. The test 'keeps_unknown_events_as_custom' explicitly verifies this permissive behavior. This diverges from the feature's expected behavior specification."
+      },
+      {
+        "file": "src/slack.rs",
+        "line": 38,
+        "severity": "blocking",
+        "description": "Slack Webhook sink sends requests without any retry/backoff/circuit-breaker logic. Unlike DiscordClient which has comprehensive 429 handling with retry_after parsing, jitter, and DLQ integration, the Slack client simply returns an error on any non-success response. The feature requirement states 'Discord 429 responses trigger retry with backoff (no event loss)' and 'Circuit breaker opens after sustained failures' — Slack should have equivalent resilience since it's a listed sink."
+      },
+      {
+        "file": "src/dynamic_tokens.rs",
+        "line": 67,
+        "severity": "non_blocking",
+        "description": "The {sh:...} dynamic token executes arbitrary shell commands via `sh -lc` with only a 2-second timeout and output capping (1200 chars) as safeguards. While `allow_dynamic_tokens` gates this per route, any route with `allow_dynamic_tokens: true` allows any user who can POST events to the daemon HTTP API to execute arbitrary commands on the server. AGENTS.md explicitly calls out 'Shell command safety: Dynamic template tokens like {sh:...} execute shell commands. These must be sandboxed or restricted to prevent command injection.' Consider adding an allowlist or at minimum logging the command execution."
+      },
+      {
+        "file": "src/discord.rs",
+        "line": 75,
+        "severity": "non_blocking",
+        "description": "The environment variable CLAWHIP_DISCORD_API_BASE is used as the primary env var name for the Discord API base URL. This should have a HERMIP_ equivalent as the primary name, with CLAWHIP_ as backward-compatible fallback (similar to how the config system handles HERMIP_DAEMON_PORT vs CLAWHIP env vars). Same issue exists for CLAWHIP_TMUX_BIN, CLAWHIP_GIT_BIN, CLAWHIP_DAEMON_URL, CLAWHIP_GITHUB_TOKEN, CLAWHIP_PLUGIN_DIR, and CLAWHIP_DISCORD_BOT_TOKEN in other files."
+      },
+      {
+        "file": "src/core/dlq.rs",
+        "line": 14,
+        "severity": "non_blocking",
+        "description": "DLQ entries are pushed to an in-memory Vec and logged to stderr via eprintln. There is no persistence mechanism — if the daemon restarts, all DLQ entries are lost. For a production event router, DLQ entries should be persisted (file or database) to prevent event loss on daemon restart."
+      },
+      {
+        "file": "src/dispatch.rs",
+        "line": 269,
+        "severity": "non_blocking",
+        "description": "Best-effort independent delivery is implemented by iterating over all deliveries and sending each one, with send_sink_message() catching errors via eprintln. However, if one delivery panics or blocks indefinitely, it could starve subsequent deliveries. The current implementation is sequential within tokio tasks. Consider spawning each delivery as a separate tokio task for true independence, or at least document the current guarantee level."
+      }
+    ]
+  },
+  "sharedStateObservations": [
+    {
+      "area": "conventions",
+      "observation": "Multiple environment variables still use the CLAWHIP_ prefix (CLAWHIP_DISCORD_API_BASE, CLAWHIP_TMUX_BIN, CLAWHIP_GIT_BIN, CLAWHIP_DAEMON_URL, CLAWHIP_GITHUB_TOKEN, CLAWHIP_DISCORD_BOT_TOKEN, CLAWHIP_PLUGIN_DIR, CLAWHIP_SKIP_STAR_PROMPT) as the PRIMARY env var name. The AGENTS.md states 'No references to clawhip in source code (compat layer comments are OK)', and the config system feature added HERMIP_ overrides for some env vars. But several code paths still check for CLAWHIP_ first or only. The convention/pattern for env var naming (HERMIP_ primary, CLAWHIP_ backward-compat) should be documented in architecture.md or AGENTS.md.",
+      "evidence": "src/discord.rs:75 — `std::env::var(\"CLAWHIP_DISCORD_API_BASE\")`; src/dynamic_tokens.rs:153 — `std::env::var(\"CLAWHIP_TMUX_BIN\")`; src/source/git.rs:406 — `std::env::var(\"CLAWHIP_GIT_BIN\")`; src/config.rs:475 — DISCORD_TOKEN_ENV_VARS checks both DISCORD_TOKEN and CLAWHIP_DISCORD_BOT_TOKEN"
+    },
+    {
+      "area": "skills",
+      "observation": "The rust-worker skill says 'Write tests first (RED)' but the worker for this feature found the codebase already had all pipeline components implemented. The skill procedure of writing tests-first doesn't apply well to 'verification only' features where the implementation already exists. The worker correctly adapted by verifying existing tests pass, but the skill doesn't cover this case.",
+      "evidence": "Transcript shows worker started with cargo test, found 402 passing tests, and then explored the codebase to verify each component. The skill's RED-GREEN-REFACTOR TDD cycle was not applicable since no new code needed writing."
+    },
+    {
+      "area": "conventions",
+      "observation": "The Slack Webhook sink lacks the resilience features (retry, circuit breaker, DLQ) that the Discord sink has. This is an inconsistency in the Sink trait implementations — the trait contract doesn't enforce resilience, leaving it to each implementor. Convention or guidance should be documented about minimum resilience requirements for Sink implementations.",
+      "evidence": "src/slack.rs sends a single request with no retry; src/discord.rs has MAX_ATTEMPTS=3, jitter, circuit breaker, DLQ integration, and retry_after parsing"
+    },
+    {
+      "area": "knowledge",
+      "observation": "The DLQ (Dead Letter Queue) in src/core/dlq.rs is purely in-memory with no persistence. This means daemon restarts lose all failed delivery records. This design decision (preserving from ClawHip) might be intentional for simplicity, but should be documented in architecture.md under 'Key Invariants' or 'Known Limitations'.",
+      "evidence": "src/core/dlq.rs — Dlq struct uses `Vec<DlqEntry>` with no file/db persistence; events are only logged to stderr on DLQ entry"
+    }
+  ],
+  "addressesFailureFrom": null,
+  "summary": "The event pipeline core feature is implemented and functional (402 tests pass, clippy clean, release build succeeds). All major components are present: typed event model with compat layer, sources (git/github/tmux/workspace), mpsc dispatcher, AND-logic router, four renderers, three sinks, rate limiting, circuit breaker, and dynamic tokens. However, the review identifies two blocking issues: (1) VAL-SOURCE-006 requires rejecting invalid sources with descriptive errors, but the current implementation permissively normalizes unknown sources to 'custom' — this is a deliberate design choice but conflicts with the feature specification, and (2) the Slack Webhook sink lacks retry/backoff/circuit-breaker handling that is required by the feature specification and present in the Discord sink. Non-blocking issues include {sh:...} command injection risks (gated but not sandboxed), inconsistent CLAWHIP_ vs HERMIP_ env var naming, and a non-persistent DLQ."
+}

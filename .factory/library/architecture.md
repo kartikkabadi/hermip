@@ -20,6 +20,20 @@ Event Sources → mpsc queue → Dispatcher → Router → Renderer → Sink
     droid)
 ```
 
+### HTTP API (Daemon Endpoints)
+
+| Endpoint | Method | Purpose |
+|---|---|---|
+| `/health` | GET | Health check (returns `{"status": "ok"}`) |
+| `/api/status` | GET | Detailed health with version, config info |
+| `/api/event` | POST | Canonical event ingestion (requires `Content-Type: application/json`) |
+| `/event` | POST | Legacy alias for `/api/event` |
+| `/events` | POST | Legacy alias for `/api/event` |
+| `/api/native/hook` | POST | Provider-specific native hook endpoint |
+| `/native/hook` | POST | Legacy alias for `/api/native/hook` |
+
+Non-JSON content-type returns 415 Unsupported Media Type. Invalid JSON returns 400 Bad Request. Unknown routes return 404.
+
 ### Sources (Event Producers)
 
 Each source implements the `Source` trait. Sources produce typed events and push them into the shared Tokio mpsc channel.
@@ -65,10 +79,15 @@ Each sink implements the `Sink` trait:
 - **Discord Webhook** — URL-based delivery
 - **Slack Webhook** — URL-based delivery
 
-All sinks include:
-- Rate limit handling (429 → Retry-After → backoff)
+**Discord REST and Discord Webhook** sinks include:
+- Rate limit handling (429 → Retry-After → backoff, up to 3 retries)
 - Circuit breaker (sustained failures → cool-down → probe → resume)
+- Dead Letter Queue (DLQ) for exhausted retries
 - Best-effort independent delivery (one sink failure doesn't affect others)
+
+**Slack Webhook** sink currently uses fire-and-forget delivery without retry, circuit breaker, or DLQ. This is a known resilience gap compared to the Discord sinks.
+
+The DLQ is in-memory only — entries are not persisted across daemon restarts.
 
 ## Hermes Agent Integration
 

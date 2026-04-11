@@ -1,0 +1,86 @@
+{
+  "featureId": "fork-and-rebrand",
+  "reviewedAt": "2026-04-11T15:45:00Z",
+  "commitId": "64b0e2a",
+  "transcriptSkeletonReviewed": true,
+  "diffReviewed": true,
+  "status": "fail",
+  "codeReview": {
+    "summary": "The fork-and-rebrand feature successfully cloned the ClawHip repo, rebranded the binary and crate name to 'hermip', removing OpenClaw/Codex/Claude Code plugins (plugins/codex/, plugins/claude-code/, skills/omc/, skills/omx/, integrations/omx/), and set up .factory/ infrastructure. The binary builds and 409 tests pass. However, there are significant remnants of the ClawHip rebrand that were not completed: (1) Multiple source files still reference CLAWHIP_ environment variables as primary names, (2) extensive 'clawhip' references remain in README.md, SKILL.md, CI workflows, scripts, and documentation files, (3) Codex and Claude Code provider code remains in src/hooks/, src/plugins.rs, and src/cli.rs, (4) SKILL.md and README.md still describe ClawHip rather than Hermip. The .factory/ infrastructure (init.sh, services.yaml) is properly set up.",
+    "issues": [
+      {
+        "file": "src/config.rs",
+        "line": 475,
+        "severity": "blocking",
+        "description": "CLAWHIP_ env vars are still primary: CLAWHIP_DISCORD_BOT_TOKEN, CLAWHIP_DAEMON_URL, CLAWHIP_GITHUB_TOKEN, CLAWHIP_DISCORD_API_BASE, CLAWHIP_TMUX_BIN, CLAWHIP_GIT_BIN, CLAWHIP_PLUGIN_DIR, CLAWHIP_SKIP_STAR_PROMPT all use the CLAWHIP_ prefix as primary names. AGENTS.md states 'No references to clawhip in source code (compat layer comments are OK)'. These are not compat layer comments — they are primary env var names used in production code paths."
+      },
+      {
+        "file": "src/hooks/mod.rs",
+        "line": 67,
+        "severity": "blocking",
+        "description": "Codex and ClaudeCode hook providers (HookProvider::Codex, HookProvider::ClaudeCode) with install/uninstall code remain in the codebase. The feature description explicitly says to remove 'hook code for Codex/Claude'. While the Hermes provider was added alongside, the legacy providers were not removed."
+      },
+      {
+        "file": "src/cli.rs",
+        "line": 69,
+        "severity": "blocking",
+        "description": "CLI subcommand 'deliver' references Codex/Claude session wrappers: 'Deliver a prompt into an existing hooked tmux-backed Codex/Claude session (including OMC/OMX wrappers).' The 'hooks' subcommand description says 'Install and manage provider-native hook forwarding for Codex and Claude Code' without mentioning Hermes. The HookProvider enum still includes Codex and ClaudeCode."
+      },
+      {
+        "file": "README.md",
+        "line": 1,
+        "severity": "non_blocking",
+        "description": "README.md still contains extensive 'clawhip' references (140+ occurrences). It still describes ClawHip rather than Hermip, references OpenClaw/Codex workflows, and mentions the old binary name 'clawhip' throughout. This should be updated to reflect the Hermip rebrand."
+      },
+      {
+        "file": "SKILL.md",
+        "line": 2,
+        "severity": "non_blocking",
+        "description": "SKILL.md still references 'clawhip' in name, description, and all command examples. It needs full rebranding to Hermip."
+      },
+      {
+        "file": ".github/workflows/ci.yml",
+        "line": 63,
+        "severity": "non_blocking",
+        "description": "CI workflow still references 'clawhip-linux-x86_64' and './target/release/clawhip'. Should be updated to hermip."
+      },
+      {
+        "file": "src/native_hooks.rs",
+        "line": 10,
+        "severity": "non_blocking",
+        "description": "CLAWHIP_DIR constant is '.hermip' but CLAWHIP_PROJECT_FILE is '.hermip/project.json'. While the directory name is correct, the Rust constant names still say CLAWHIP."
+      },
+      {
+        "file": "scripts/live-verify-default-presets.sh",
+        "line": 17,
+        "severity": "non_blocking",
+        "description": "Script references CLAWHIP_REPO and uses 'clawhip' in examples. Should be updated."
+      },
+      {
+      "file": "src/hooks/prompt_deliver.rs",
+      "line": 241,
+      "severity": "non_blocking",
+      "description": "Error messages reference 'OMX bridge', 'OMC/OMX-compatible', and Codex/Claude names. While compat layer references are OK per AGENTS.md, user-facing error messages should use Hermip branding."
+      }
+    ]
+  },
+  "sharedStateObservations": [
+    {
+      "area": "conventions",
+      "observation": "The CLAWHIP_ env var naming convention is inconsistent. Some new env vars use HERMIP_ prefix (HERMIP_CONFIG, HERMIP_DAEMON_PORT, HERMIP_DAEMON_BASE_URL) but many code paths still use CLAWHIP_ as the primary name. A clear convention should be documented: HERMIP_ as primary, CLAWHIP_ as backward-compat fallback.",
+      "evidence": "src/config.rs has both HERMIP_* overrides and CLAWHIP_* primary vars; src/discord.rs, src/source/git.rs, src/source/tmux.rs, src/lifecycle.rs all use CLAWHIP_*"
+    },
+    {
+      "area": "knowledge",
+      "observation": "The plugins/codex/ and plugins/claude-code/ directories were removed, but the hook provider enum (HookProvider::Codex, HookProvider::ClaudeCode) and related install/uninstall logic remain in src/hooks/mod.rs and src/cli.rs. The rebrand was partial — the Hermes provider was added but legacy providers were not removed.",
+      "evidence": "src/hooks/mod.rs lines 67-88 still handle HookProvider::Codex and HookProvider::ClaudeCode; src/cli.rs line 69 mentions 'Codex/Claude session'; src/plugins.rs lines 181 and 197 still define Codex and Claude Code bridge plugins"
+    },
+    {
+      "area": "services",
+      "observation": ".factory/services.yaml correctly defines the hermip daemon start/stop/healthcheck commands on port 25294. .factory/init.sh correctly builds the release binary. Both are properly set up.",
+      "evidence": ".factory/services.yaml has hermip service with start: 'hermip daemon start --config hermip.toml', stop: 'hermip daemon stop', healthcheck: 'curl -sf http://localhost:25294/health', port: 25294"
+    }
+  ],
+  "addressesFailureFrom": null,
+  "summary": "The fork-and-rebrand feature successfully cloned the ClawHip repo, renamed the binary to 'hermip', removed plugin directories (codex, claude-code, omc, omx), and set up .factory/ infrastructure. The binary builds and all 409 tests pass. However, the rebrand is incomplete with blocking issues: (1) CLAWHIP_ env vars remain as primary names in source code (not compat layer), (2) Codex/ClaudeCode hook providers and related code were not removed from src/hooks/, src/cli.rs, src/plugins.rs, (3) CLI help text still references Codex/Claude/OMC/OMX. Non-blocking: README.md and SKILL.md still have extensive clawhip references, CI workflows still reference the old binary name, and several source files use CLAWHIP_ constant names."
+}

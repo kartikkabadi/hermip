@@ -1,0 +1,104 @@
+{
+  "milestone": "foundation",
+  "round": 1,
+  "status": "fail",
+  "validatorsRun": {
+    "test": { "passed": true, "command": "cargo test", "exitCode": 0 },
+    "typecheck": { "passed": true, "command": "cargo clippy -- -D warnings", "exitCode": 0 },
+    "lint": { "passed": true, "command": "cargo fmt --check", "exitCode": 0 }
+  },
+  "reviewsSummary": {
+    "total": 5,
+    "passed": 2,
+    "failed": 3,
+    "failedFeatures": ["fork-and-rebrand", "config-system", "event-pipeline-core"]
+  },
+  "blockingIssues": [
+    {
+      "featureId": "fork-and-rebrand",
+      "severity": "blocking",
+      "description": "CLAWHIP_ env vars remain as primary names in production code paths (src/config.rs, src/discord.rs, src/source/git.rs, src/source/tmux.rs, src/lifecycle.rs, src/plugins.rs). AGENTS.md states 'No references to clawhip in source code (compat layer comments are OK)'. These are not compat comments — they are primary env var identifiers used in active code."
+    },
+    {
+      "featureId": "fork-and-rebrand",
+      "severity": "blocking",
+      "description": "Codex and ClaudeCode hook providers (HookProvider::Codex, HookProvider::ClaudeCode) and related install/uninstall code remain in src/hooks/mod.rs and src/cli.rs. The feature description explicitly requires removing 'hook code for Codex/Claude'. While the Hermes provider was added, the legacy providers should have been removed or gated behind a feature flag. CLI help text still references Codex/Claude/OMC/OMX."
+    },
+    {
+      "featureId": "config-system",
+      "severity": "blocking",
+      "description": "Security: `hermip config show` outputs the full config via `to_pretty_toml()` without masking bot tokens, webhook URLs, or GitHub tokens. Mission AGENTS.md explicitly requires 'Mask them in config show output' for secrets. This is a P0 security issue per the project's security requirements."
+    },
+    {
+      "featureId": "config-system",
+      "severity": "blocking",
+      "description": "The `apply_hermip_env_overrides()` function directly calls `env::var()` instead of using the injectable `with<F>` pattern used elsewhere in config.rs. This makes the function untestable in unit tests, and there are zero unit tests for HERMIP_* env var override behavior — a critical feature path with no test coverage."
+    },
+    {
+      "featureId": "event-pipeline-core",
+      "severity": "blocking",
+      "description": "VAL-SOURCE-006 requires that invalid source events be 'rejected with descriptive errors listing valid sources'. Instead, unknown sources are permissively normalized to 'custom'. The test `keeps_unknown_events_as_custom` explicitly verifies this permissive behavior. This diverges from the feature specification, though it may be an intentional design choice (permissive vs strict)."
+    },
+    {
+      "featureId": "event-pipeline-core",
+      "severity": "blocking",
+      "description": "Slack Webhook sink (src/slack.rs) lacks retry/backoff/circuit-breaker/429 handling. The Discord sink has comprehensive resilience (3 retries, jitter, circuit breaker, DLQ), but Slack is fire-and-forget. The feature requirement states 'Discord 429 responses trigger retry with backoff (no event loss)' and 'Circuit breaker opens after sustained failures' — Slack should have equivalent resilience."
+    }
+  ],
+  "appliedUpdates": [
+    {
+      "target": "library",
+      "description": "Added env var naming convention to environment.md: documented HERMIP_ as primary prefix, CLAWHIP_ as backward-compat, and listed all legacy CLAWHIP_* env vars that remain in production code.",
+      "sourceFeature": "fork-and-rebrand"
+    },
+    {
+      "target": "library",
+      "description": "Added HTTP API endpoint documentation to architecture.md: listed all daemon routes (/health, /api/event, /api/native/hook) with legacy aliases, methods, and response codes.",
+      "sourceFeature": "daemon-http-api"
+    },
+    {
+      "target": "library",
+      "description": "Updated sink resilience documentation in architecture.md: clarified Discord sinks have full resilience (retry, circuit breaker, DLQ) while Slack sink is fire-and-forget. Documented DLQ is in-memory only.",
+      "sourceFeature": "event-pipeline-core"
+    }
+  ],
+  "suggestedGuidanceUpdates": [
+    {
+      "target": "AGENTS.md",
+      "suggestion": "Add security convention: all secrets (bot tokens, webhook URLs, GitHub tokens) MUST be masked in `config show` output. Implement masking by replacing secret values with '***' or similar before serialization. This is currently stated in the mission AGENTS.md but not enforced in the code.",
+      "evidence": "config-system review found hermip config show outputs plaintext secrets via to_pretty_toml(). Multiple reviews confirm AGENTS.md requires masking but implementation doesn't do it.",
+      "isSystemic": true
+    },
+    {
+      "target": "AGENTS.md",
+      "suggestion": "Document env var naming convention: HERMIP_ prefix is primary for all new env vars. CLAWHIP_ prefix is backward-compat only. Workers must NOT introduce new CLAWHIP_ variables. Existing CLAWHIP_ variables should be migrated to HERMIP_ primary with CLAWHIP_ fallback where backward compat is needed.",
+      "evidence": "fork-and-rebrand and config-system reviews both flagged that CLAWHIP_ env vars remain as primary names in production code. Three separate reviewers flagged this across different features.",
+      "isSystemic": true
+    },
+    {
+      "target": "AGENTS.md",
+      "suggestion": "Clarify the rebrand boundary: feature 'fork-and-rebrand' specifies removing Codex/Claude code, but HookProvider::Codex and HookProvider::ClaudeCode remain in the codebase. The orchestrator should decide whether the legacy provider enum variants should be removed entirely (breaking change for existing ClawHip users) or retained under a feature flag, and communicate this boundary to workers.",
+      "evidence": "fork-and-rebrand review found HookProvider::Codex and HookProvider::ClaudeCode still exist in src/hooks/mod.rs and src/cli.rs. The CLI help text references Codex/Claude sessions.",
+      "isSystemic": false
+    }
+  ],
+  "rejectedObservations": [
+    {
+      "observation": "README.md and SKILL.md still contain extensive clawhip references (140+ occurrences in README, SKILL.md still says name: clawhip).",
+      "reason": "duplicate — this is covered under the fork-and-rebrand blocking issue about incomplete rebrand. Fixing the blocking issues will likely include documentation updates."
+    },
+    {
+      "observation": "The {sh:...} dynamic token executes arbitrary shell commands without sandboxing.",
+      "reason": "ambiguous — this is a known design trade-off that is gated by `allow_dynamic_tokens` per route. AGENTS.md already flags this for review. Not blocking for the foundation milestone."
+    },
+    {
+      "observation": "DLQ is in-memory only with no persistence across restarts.",
+      "reason": "already-documented — the architecture.md now documents this as a known limitation. Not blocking for foundation milestone."
+    },
+    {
+      "observation": "hermip hooks install --all does NOT include the Hermes provider (selected_providers returns only [Codex, ClaudeCode]).",
+      "reason": "this is a non-blocking bug that is a consequence of the incomplete rebrand (Codex/ClaudeCode providers not yet removed). Fixing the fork-and-rebrand blocking issue would likely address this."
+    }
+  ],
+  "previousRound": null
+}

@@ -5,12 +5,22 @@
 
 ---
 
+## Environment Variable Naming Convention
+
+Hermip uses a dual naming scheme for environment variables:
+- **Primary:** `HERMIP_*` prefix (e.g., `HERMIP_DAEMON_PORT`, `HERMIP_CONFIG`, `HERMIP_DAEMON_BASE_URL`)
+- **Backward-compat:** `CLAWHIP_*` prefix (e.g., `CLAWHIP_DAEMON_URL`, `CLAWHIP_DISCORD_BOT_TOKEN`, `CLAWHIP_GITHUB_TOKEN`, `CLAWHIP_DISCORD_API_BASE`, `CLAWHIP_TMUX_BIN`, `CLAWHIP_GIT_BIN`, `CLAWHIP_PLUGIN_DIR`, `CLAWHIP_SKIP_STAR_PROMPT`)
+
+Several code paths still read `CLAWHIP_*` as primary names. Workers should NOT introduce new `CLAWHIP_*` vars — use `HERMIP_*` for all new env vars. The legacy `CLAWHIP_*` vars are preserved for backward compatibility and should be considered read-only compat shims.
+
 ## Required Environment Variables
 
 - `HERMIP_DISCORD_WEBHOOK_URL` — Discord webhook URL for notification delivery (or set in hermip.toml)
 - `HERMIP_SLACK_WEBHOOK_URL` — Slack webhook URL for notification delivery (or set in hermip.toml)
 - `HERMIP_DISCORD_BOT_TOKEN` — Discord bot token for REST API delivery (alternative to webhook)
 - `HERMIP_DAEMON_PORT` — Override daemon port (default: 25294)
+- `HERMIP_CONFIG` — Override config file path (equivalent to --config flag)
+- `HERMIP_DAEMON_BASE_URL` — Override daemon base URL in config
 
 ## External Dependencies
 

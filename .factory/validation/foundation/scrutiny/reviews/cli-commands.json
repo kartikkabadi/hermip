@@ -1,0 +1,62 @@
+{
+  "featureId": "cli-commands",
+  "reviewedAt": "2026-04-11T14:45:00Z",
+  "commitId": "98b3fbb",
+  "transcriptSkeletonReviewed": true,
+  "diffReviewed": true,
+  "status": "pass",
+  "codeReview": {
+    "summary": "The CLI implementation covers all required subcommands: hermip daemon start/stop/restart/status, hermip hooks install/uninstall with --provider hermes --scope global, hermip config show/set/verify-bindings, hermip send for manual event ingestion, and hermip release preflight. Clap derive macros are used throughout with proper --version and --help support. The worker also fixed a config set bug where bare integers couldn't be parsed as TOML values. The Hermes hooks integration is well-implemented with hook forwarding Python scripts and proper plugin.yaml. Test coverage is solid with 39+ CLI parsing tests plus unit tests for hooks install/uninstall, release preflight, and config set operations.",
+    "issues": [
+      {
+        "file": "src/hooks/mod.rs",
+        "line": 271,
+        "severity": "non_blocking",
+        "description": "selected_providers() returns only [Codex, ClaudeCode] when args.all is true or args.provider is empty — it does NOT include Hermes. This means 'hermip hooks install --all' skips the Hermes provider. The --all flag and the empty-provider default path should include HookProvider::Hermes, consistent with how selected_uninstall_providers() already does."
+      },
+      {
+        "file": "src/hooks/mod.rs",
+        "line": 445,
+        "severity": "non_blocking",
+        "description": "write_hermes_plugin returns the plugin_dir path as the 'path' result, not a specific file. This is inconsistent with write_codex_hooks and write_claude_settings which return the specific config file path. The install report lists the plugin directory path among generated files, which may be misleading — the actual generated files within it are tracked separately in local `generated_files` but those are not added to the InstallReport."
+      },
+      {
+        "file": "src/hooks/mod.rs",
+        "line": 167,
+        "severity": "non_blocking",
+        "description": "HERMES_HOOKS_PY_CONTENT hardcodes the daemon URL as 'http://localhost:25294' instead of using the HERMIP_DAEMON_URL environment variable in all functions. The forward_to_hermip() function correctly reads HERMIP_DAEMON_URL, but send_event() and config_verify() in HERMES_TOOLS_PY_CONTENT hardcode the port. This is a minor inconsistency in the generated plugin code."
+      },
+      {
+        "file": "src/main.rs",
+        "line": 95,
+        "severity": "non_blocking",
+        "description": "When no subcommand is provided, the CLI defaults to Commands::Start (via unwrap_or). This means 'hermip' with no arguments silently starts the daemon rather than showing help. While this is a valid design choice matching the original ClawHip behavior, it could surprise new users who expect --help output."
+      },
+      {
+        "file": "src/cli.rs",
+        "line": 0,
+        "severity": "non_blocking",
+        "description": "The 'hermip send' command uses --type and --source flags, where --type uses a raw identifier (r#type) to avoid the reserved keyword. This works correctly but is a slight ergonomic oddity. The send command creates a 'custom' event type which is reasonable but the --type flag overrides the default 'custom' kind — user should be aware the default kind is 'custom' not derived from other context."
+      }
+    ]
+  },
+  "sharedStateObservations": [
+    {
+      "area": "conventions",
+      "observation": "The config set_from_key_value method uses a manual match on dot-notation keys (e.g. 'daemon.port', 'defaults.channel') rather than a generic TOML path setter. This means every new config key requires a code change in set_from_key_value. This is a safe approach (type validation on every key) but should be documented as a pattern if new config keys are expected to be added frequently.",
+      "evidence": "src/config.rs:861-975 — set_from_key_value method explicitly matches each supported key and returns an error for unsupported keys with a hardcoded list"
+    },
+    {
+      "area": "skills",
+      "observation": "The worker followed the rust-worker skill procedure correctly. The worker's session included systematic verification (cargo test, clippy, release build, manual CLI testing) and the handoff accurately describes the bug fix for config set.",
+      "evidence": "Worker transcript shows: reading feature spec, checking existing code, running cargo test/clippy, building release, testing --version/--help/bogus-command, identifying and fixing the config set bug, re-running tests and clippy, committing and pushing."
+    },
+    {
+      "area": "knowledge",
+      "observation": "The Hermes plugin directory constant HERMES_PLUGIN_DIR is defined in src/native_hooks.rs alongside other provider constants like CODEX_HOOKS_FILE and CLAUDE_SETTINGS_FILE. The hooks module re-exports these constants. This cross-module coupling should be documented in .factory/library/architecture.md.",
+      "evidence": "src/hooks/mod.rs line 10 imports: 'use crate::native_hooks::{CLAUDE_SETTINGS_FILE, CLAWHIP_PROJECT_FILE, CODEX_HOOKS_FILE, HERMES_PLUGIN_DIR, HOOK_SCRIPT, SHARED_HOOK_EVENTS, generated_hook_script};'"
+    }
+  ],
+  "addressesFailureFrom": null,
+  "summary": "The cli-commands feature is well-implemented and covers all required subcommands. The CLI uses clap derive macros with --version and --help support, and unknown subcommands produce helpful error output. The worker fixed a real bug (bare integer parsing in config set) and verified all commands manually. One notable issue: hermip hooks install --all does NOT include the Hermes provider (selected_providers returns only [Codex, ClaudeCode]), while the uninstall path correctly includes all three providers. This is likely a bug but does not block the feature since --provider hermes can be specified explicitly. Test coverage is comprehensive with 39+ CLI parsing tests plus integration tests for hook install/uninstall and release preflight."
+}
