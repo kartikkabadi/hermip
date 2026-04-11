@@ -648,6 +648,46 @@ impl AppConfig {
         Ok(toml::to_string_pretty(self)?)
     }
 
+    /// Returns a masked copy of this config with all secret/credential fields
+    /// replaced by `"***"` for safe display. Original values are preserved in
+    /// `self` for daemon operation.
+    pub fn masked(&self) -> Self {
+        let mut config = self.clone();
+        config.discord.bot_token = config.discord.bot_token.as_ref().map(|_| "***".to_string());
+        config.providers.discord.bot_token = config
+            .providers
+            .discord
+            .bot_token
+            .as_ref()
+            .map(|_| "***".to_string());
+        config.monitors.github_token = config
+            .monitors
+            .github_token
+            .as_ref()
+            .map(|_| "***".to_string());
+        for route in &mut config.routes {
+            route.webhook = route.webhook.as_ref().map(|_| "***".to_string());
+            route.slack_webhook = route.slack_webhook.as_ref().map(|_| "***".to_string());
+        }
+        config
+    }
+
+    /// Returns the config as a masked TOML string for safe display.
+    /// All secret/credential fields are replaced with `"***"`.
+    pub fn to_display_toml(&self) -> Result<String> {
+        self.masked().to_pretty_toml()
+    }
+
+    /// Returns whether a dot-separated config key designates a secret field.
+    /// Secret values should be masked in display output.
+    pub fn is_secret_key(key: &str) -> bool {
+        matches!(
+            key,
+            "discord.token" | "providers.discord.bot_token" | "monitors.github_token"
+        ) || key.ends_with(".webhook")
+            || key.ends_with(".slack_webhook")
+    }
+
     pub fn save(&self, path: &Path) -> Result<()> {
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent)?;
@@ -2128,5 +2168,247 @@ default_channel = "legacy-default-channel"
         );
         // The legacy [discord] struct should be cleared.
         assert!(config.discord.bot_token.is_none());
+    }
+
+    // ---------------------------------------------------------------------------
+    // Secrets masking: to_display_toml masks all secret fields
+    // ---------------------------------------------------------------------------
+
+    fn config_with_all_secrets() -> AppConfig {
+        AppConfig {
+            discord: DiscordConfig {
+                bot_token: Some("super-secret-legacy-token".into()),
+                legacy_default_channel: None,
+            },
+            providers: ProvidersConfig {
+                discord: DiscordConfig {
+                    bot_token: Some("super-secret-bot-token".into()),
+                    legacy_default_channel: Some("123456789".into()),
+                },
+                slack: SlackConfig::default(),
+            },
+            daemon: DaemonConfig {
+                bind_host: "0.0.0.0".into(),
+                port: 25294,
+                base_url: "http://127.0.0.1:25294".into(),
+            },
+            dispatch: DispatchConfig::default(),
+            defaults: DefaultsConfig {
+                channel: Some("default-channel".into()),
+                channel_name: Some("general".into()),
+                format: MessageFormat::Compact,
+            },
+            routes: vec![
+                RouteRule {
+                    event: "git.commit".into(),
+                    sink: "discord".into(),
+                    channel: Some("123456".into()),
+                    webhook: Some(
+                        "https://discord.com/api/webhooks/111/secret-webhook-token".into(),
+                    ),
+                    slack_webhook: None,
+                    mention: None,
+                    allow_dynamic_tokens: false,
+                    format: None,
+                    template: None,
+                    channel_name: None,
+                    filter: BTreeMap::new(),
+                },
+                RouteRule {
+                    event: "tmux.keyword".into(),
+                    sink: "slack".into(),
+                    channel: None,
+                    webhook: None,
+                    slack_webhook: Some(
+                        "https://hooks.slack.com/services/T/B/secret-slack-hook".into(),
+                    ),
+                    mention: None,
+                    allow_dynamic_tokens: false,
+                    format: None,
+                    template: None,
+                    channel_name: None,
+                    filter: BTreeMap::new(),
+                },
+                RouteRule {
+                    event: "mission.started".into(),
+                    sink: "discord".into(),
+                    channel: Some("789012".into()),
+                    webhook: None,
+                    slack_webhook: None,
+                    mention: None,
+                    allow_dynamic_tokens: false,
+                    format: None,
+                    template: None,
+                    channel_name: None,
+                    filter: BTreeMap::new(),
+                },
+            ],
+            monitors: MonitorConfig {
+                github_token: Some("ghp_abcdef1234567890".into()),
+                ..MonitorConfig::default()
+            },
+            cron: CronConfig::default(),
+            update: crate::update::UpdateConfig::default(),
+        }
+    }
+
+    #[test]
+    fn masked_config_replaces_all_secret_fields_with_mask() {
+        let config = config_with_all_secrets();
+        let masked = config.masked();
+
+        // discord.bot_token (legacy) should be masked
+        assert_eq!(masked.discord.bot_token.as_deref(), Some("***"));
+        // providers.discord.bot_token should be masked
+        assert_eq!(masked.providers.discord.bot_token.as_deref(), Some("***"));
+        // monitors.github_token should be masked
+        assert_eq!(masked.monitors.github_token.as_deref(), Some("***"));
+        // route.webhook should be masked
+        assert_eq!(masked.routes[0].webhook.as_deref(), Some("***"));
+        // route.slack_webhook should be masked
+        assert_eq!(masked.routes[1].slack_webhook.as_deref(), Some("***"));
+    }
+
+    #[test]
+    fn masked_config_preserves_non_secret_fields() {
+        let config = config_with_all_secrets();
+        let masked = config.masked();
+
+        // Non-secret fields should be unchanged
+        assert_eq!(masked.daemon.port, 25294);
+        assert_eq!(masked.daemon.base_url, "http://127.0.0.1:25294");
+        assert_eq!(
+            masked.providers.discord.legacy_default_channel.as_deref(),
+            Some("123456789")
+        );
+        assert_eq!(masked.defaults.channel.as_deref(), Some("default-channel"));
+        assert_eq!(masked.defaults.channel_name.as_deref(), Some("general"));
+        assert_eq!(masked.routes[0].event, "git.commit");
+        assert_eq!(masked.routes[0].channel.as_deref(), Some("123456"));
+        assert_eq!(masked.routes[0].sink, "discord");
+        assert_eq!(masked.routes[2].channel.as_deref(), Some("789012"));
+        assert_eq!(masked.routes.len(), 3);
+    }
+
+    #[test]
+    fn masked_config_does_not_add_mask_to_none_secrets() {
+        let config = AppConfig::default();
+        let masked = config.masked();
+
+        // None secret fields should remain None (not become Some("***"))
+        assert!(masked.discord.bot_token.is_none());
+        assert!(masked.providers.discord.bot_token.is_none());
+        assert!(masked.monitors.github_token.is_none());
+    }
+
+    #[test]
+    fn masked_config_does_not_modify_original() {
+        let config = config_with_all_secrets();
+        let original_bot_token = config.providers.discord.bot_token.clone();
+        let original_webhook = config.routes[0].webhook.clone();
+        let original_github_token = config.monitors.github_token.clone();
+
+        let _masked = config.masked();
+
+        // Original config should be unchanged
+        assert_eq!(
+            config.providers.discord.bot_token.as_deref(),
+            original_bot_token.as_deref()
+        );
+        assert_eq!(
+            config.routes[0].webhook.as_deref(),
+            original_webhook.as_deref()
+        );
+        assert_eq!(
+            config.monitors.github_token.as_deref(),
+            original_github_token.as_deref()
+        );
+    }
+
+    #[test]
+    fn to_display_toml_produces_masked_output() {
+        let config = config_with_all_secrets();
+        let display = config.to_display_toml().unwrap();
+
+        // All secret values must be masked
+        assert!(
+            !display.contains("super-secret-bot-token"),
+            "display TOML should not contain plaintext bot token"
+        );
+        assert!(
+            !display.contains("super-secret-legacy-token"),
+            "display TOML should not contain plaintext legacy token"
+        );
+        assert!(
+            !display.contains("secret-webhook-token"),
+            "display TOML should not contain plaintext webhook URL"
+        );
+        assert!(
+            !display.contains("secret-slack-hook"),
+            "display TOML should not contain plaintext Slack webhook URL"
+        );
+        assert!(
+            !display.contains("ghp_abcdef1234567890"),
+            "display TOML should not contain plaintext GitHub token"
+        );
+
+        // The mask placeholder must appear for each secret field that has a value
+        assert!(
+            display.contains("\"***\""),
+            "display TOML should contain masked values"
+        );
+
+        // Non-secret values should be present
+        assert!(
+            display.contains("25294"),
+            "display TOML should contain port"
+        );
+        assert!(
+            display.contains("default-channel"),
+            "display TOML should contain channel name"
+        );
+    }
+
+    #[test]
+    fn to_pretty_toml_still_contains_plaintext_secrets() {
+        // Ensure to_pretty_toml (used by save()) still contains real secrets
+        let config = config_with_all_secrets();
+        let raw = config.to_pretty_toml().unwrap();
+
+        assert!(
+            raw.contains("super-secret-bot-token"),
+            "raw TOML should contain plaintext bot token for save()"
+        );
+        assert!(
+            raw.contains("ghp_abcdef1234567890"),
+            "raw TOML should contain plaintext GitHub token for save()"
+        );
+    }
+
+    #[test]
+    fn is_secret_key_identifies_all_secret_keys() {
+        // Exact matches for known secret keys
+        assert!(AppConfig::is_secret_key("discord.token"));
+        assert!(AppConfig::is_secret_key("providers.discord.bot_token"));
+        assert!(AppConfig::is_secret_key("monitors.github_token"));
+
+        // Suffix matches for webhook fields (dots required before suffix)
+        assert!(AppConfig::is_secret_key("routes[0].webhook"));
+        assert!(AppConfig::is_secret_key("routes[0].slack_webhook"));
+        assert!(AppConfig::is_secret_key("foo.webhook"));
+        assert!(AppConfig::is_secret_key("foo.slack_webhook"));
+
+        // Non-secret keys should not match
+        assert!(!AppConfig::is_secret_key("daemon.port"));
+        assert!(!AppConfig::is_secret_key("daemon.base_url"));
+        assert!(!AppConfig::is_secret_key("defaults.channel"));
+        assert!(!AppConfig::is_secret_key("defaults.format"));
+        assert!(!AppConfig::is_secret_key(
+            "providers.discord.default_channel"
+        ));
+        // Bare field names without dot prefix are not secret key paths
+        assert!(!AppConfig::is_secret_key("webhook"));
+        assert!(!AppConfig::is_secret_key("slack_webhook"));
+        assert!(!AppConfig::is_secret_key("bot_token"));
     }
 }

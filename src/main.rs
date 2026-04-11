@@ -302,7 +302,7 @@ async fn real_main() -> Result<()> {
                 editable.run_interactive_editor(&config_path)
             }
             ConfigCommand::Show => {
-                println!("{}", config.to_pretty_toml()?);
+                println!("{}", config.to_display_toml()?);
                 Ok(())
             }
             ConfigCommand::Path => {
@@ -313,7 +313,17 @@ async fn real_main() -> Result<()> {
                 let mut editable = AppConfig::load_or_default(&config_path)?;
                 editable.set_from_key_value(&key, &value)?;
                 editable.save(&config_path)?;
-                println!("Set {} = {} in {}", key, value, config_path.display());
+                let display_value = if AppConfig::is_secret_key(&key) {
+                    "***"
+                } else {
+                    &value
+                };
+                println!(
+                    "Set {} = {} in {}",
+                    key,
+                    display_value,
+                    config_path.display()
+                );
                 Ok(())
             }
             ConfigCommand::VerifyBindings(args) => run_verify_bindings(config, args).await,
