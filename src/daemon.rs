@@ -9,6 +9,7 @@ use axum::response::IntoResponse;
 use axum::routing::{get, post};
 use axum::{Json, Router as AxumRouter};
 use serde_json::{Value, json};
+use tokio::signal;
 use tokio::sync::{RwLock, mpsc};
 
 use crate::Result;
@@ -94,8 +95,8 @@ pub async fn run(
     }
 
     let app = AxumRouter::new()
-        .route("/health", get(health))
-        .route("/api/status", get(status))
+        .route("/health", get(health_simple))
+        .route("/api/status", get(health_detailed))
         .route("/event", post(post_event))
         .route("/api/event", post(post_event))
         .route("/events", post(post_event))
@@ -122,8 +123,36 @@ pub async fn run(
         "hermip daemon v{VERSION} listening on http://{} (token_source: {token_source})",
         listener.local_addr()?
     );
-    axum::serve(listener, app).await?;
+
+    axum::serve(listener, app)
+        .with_graceful_shutdown(shutdown_signal())
+        .await?;
+    println!("hermip daemon v{VERSION} stopped");
     Ok(())
+}
+
+async fn shutdown_signal() {
+    let ctrl_c = async {
+        signal::ctrl_c()
+            .await
+            .expect("hermip daemon: failed to install Ctrl+C handler");
+    };
+
+    #[cfg(unix)]
+    let terminate = async {
+        signal::unix::signal(signal::unix::SignalKind::terminate())
+            .expect("hermip daemon: failed to install SIGTERM handler")
+            .recv()
+            .await;
+    };
+
+    #[cfg(not(unix))]
+    let terminate = std::future::pending::<()>();
+
+    tokio::select! {
+        _ = ctrl_c => {},
+        _ = terminate => {},
+    }
 }
 
 fn spawn_source<S>(source: S, tx: mpsc::Sender<IncomingEvent>)
@@ -164,7 +193,11 @@ fn source_failure_alert_event(source_name: &str, error_message: &str) -> Incomin
     event
 }
 
-async fn health(State(state): State<AppState>) -> impl IntoResponse {
+async fn health_simple() -> impl IntoResponse {
+    Json(json!({"status": "ok"}))
+}
+
+async fn health_detailed(State(state): State<AppState>) -> impl IntoResponse {
     let registered = state.tmux_registry.read().await.len();
     Json(health_payload(
         state.config.as_ref(),
@@ -187,10 +220,6 @@ fn health_payload(config: &AppConfig, port: u16, registered_tmux_sessions: usize
         "configured_cron_jobs": config.cron.jobs.len(),
         "registered_tmux_sessions": registered_tmux_sessions,
     })
-}
-
-async fn status(State(state): State<AppState>) -> impl IntoResponse {
-    health(State(state)).await
 }
 
 async fn post_event(

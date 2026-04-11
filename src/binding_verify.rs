@@ -532,10 +532,7 @@ mod tests {
             .unwrap();
         assert_eq!(config.routes.len(), 1);
         assert_eq!(config.routes[0].channel.as_deref(), Some("123456"));
-        assert_eq!(
-            config.routes[0].channel_name.as_deref(),
-            Some("hermip-dev")
-        );
+        assert_eq!(config.routes[0].channel_name.as_deref(), Some("hermip-dev"));
         assert_eq!(config.routes[0].filter.get("repo").unwrap(), "hermip");
     }
 

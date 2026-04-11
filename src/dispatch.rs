@@ -265,10 +265,7 @@ impl Dispatcher {
 
     async fn send_sink_message(&self, sink: &dyn Sink, target: &SinkTarget, message: SinkMessage) {
         if let Err(error) = sink.send(target, &message).await {
-            eprintln!(
-                "hermip dispatcher delivery failed to {:?}: {error}",
-                target
-            );
+            eprintln!("hermip dispatcher delivery failed to {:?}: {error}", target);
         }
     }
 
