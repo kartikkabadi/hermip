@@ -338,4 +338,26 @@ mod tests {
             assert!(document["hooks"][event].is_array(), "missing {event}");
         }
     }
+
+    #[test]
+    fn write_generated_file_preserves_existing_content_without_force() {
+        let dir = tempdir().expect("tempdir");
+        let path = dir.path().join("generated.mjs");
+        fs::write(&path, "old\n").expect("seed file");
+
+        write_generated_file(&path, "new\n", false).expect("write");
+
+        assert_eq!(fs::read_to_string(&path).expect("read"), "old\n");
+    }
+
+    #[test]
+    fn write_generated_file_overwrites_existing_content_with_force() {
+        let dir = tempdir().expect("tempdir");
+        let path = dir.path().join("generated.mjs");
+        fs::write(&path, "old\n").expect("seed file");
+
+        write_generated_file(&path, "new\n", true).expect("write");
+
+        assert_eq!(fs::read_to_string(&path).expect("read"), "new\n");
+    }
 }
