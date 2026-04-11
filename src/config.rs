@@ -410,11 +410,22 @@ pub enum CronJobKind {
 }
 
 pub fn default_config_path() -> PathBuf {
-    if let Ok(override_path) = env::var("CLAWHIP_CONFIG") {
+    if let Ok(override_path) = env::var("HERMIP_CONFIG") {
         return PathBuf::from(override_path);
     }
+    // 1. Check for hermip.toml in current working directory.
+    if let Ok(cwd) = env::current_dir() {
+        let local = cwd.join("hermip.toml");
+        if local.exists() {
+            return local;
+        }
+    }
+    // 2. Fall back to ~/.config/hermip/hermip.toml (global).
     let home = env::var("HOME").unwrap_or_else(|_| ".".to_string());
-    PathBuf::from(home).join(".hermip").join("config.toml")
+    PathBuf::from(home)
+        .join(".config")
+        .join("hermip")
+        .join("hermip.toml")
 }
 
 fn default_bind_host() -> String {
@@ -552,15 +563,62 @@ impl AppConfig {
         if !path.exists() {
             return Ok(Self::default());
         }
-        let raw = fs::read_to_string(path)?;
-        let raw_toml: toml::Value = toml::from_str(&raw)?;
-        let mut config: Self = toml::from_str(&raw)?;
+        let raw = fs::read_to_string(path)
+            .map_err(|e| format!("failed to read config file {}: {e}", path.display()))?;
+        let raw_toml: toml::Value = toml::from_str(&raw)
+            .map_err(|e| format!("failed to parse config file {}: {e}", path.display()))?;
+        let mut config: Self = toml::from_str(&raw)
+            .map_err(|e| format!("failed to deserialize config file {}: {e}", path.display()))?;
         config.merge_legacy_discord(&raw_toml)?;
         config.normalize();
         if config.defaults.channel.is_none() {
             config.defaults.channel = config.discord_default_channel();
         }
+        // VAL-CONFIG-006: HERMIP_* env vars override TOML values (highest precedence).
+        config.apply_hermip_env_overrides();
         Ok(config)
+    }
+
+    /// Apply HERMIP_* environment variable overrides.
+    /// These take highest precedence over TOML values.
+    fn apply_hermip_env_overrides(&mut self) {
+        // HERMIP_DAEMON_PORT overrides [daemon].port
+        if let Ok(port_str) = env::var("HERMIP_DAEMON_PORT")
+            && let Ok(port) = port_str.parse::<u16>()
+        {
+            self.daemon.port = port;
+        }
+        // HERMIP_DAEMON_BASE_URL overrides [daemon].base_url
+        if let Ok(url) = env::var("HERMIP_DAEMON_BASE_URL")
+            && !url.trim().is_empty()
+        {
+            self.daemon.base_url = url.trim().to_string();
+        }
+        // HERMIP_DEFAULTS_CHANNEL overrides [defaults].channel
+        if let Ok(ch) = env::var("HERMIP_DEFAULTS_CHANNEL")
+            && !ch.trim().is_empty()
+        {
+            self.defaults.channel = Some(ch.trim().to_string());
+        }
+        // HERMIP_DEFAULTS_FORMAT overrides [defaults].format
+        if let Ok(fmt) = env::var("HERMIP_DEFAULTS_FORMAT")
+            && !fmt.trim().is_empty()
+            && let Ok(format) = crate::events::MessageFormat::from_label(fmt.trim())
+        {
+            self.defaults.format = format;
+        }
+        // HERMIP_PROVIDERS_DISCORD_TOKEN overrides [providers.discord].token
+        if let Ok(token) = env::var("HERMIP_PROVIDERS_DISCORD_TOKEN")
+            && !token.trim().is_empty()
+        {
+            self.providers.discord.bot_token = Some(token.trim().to_string());
+        }
+        // HERMIP_DEFAULTS_CHANNEL_NAME overrides [defaults].channel_name
+        if let Ok(name) = env::var("HERMIP_DEFAULTS_CHANNEL_NAME")
+            && !name.trim().is_empty()
+        {
+            self.defaults.channel_name = Some(name.trim().to_string());
+        }
     }
 
     fn merge_legacy_discord(&mut self, raw_toml: &toml::Value) -> Result<()> {
@@ -807,9 +865,9 @@ impl AppConfig {
             Ok(v) => v,
             Err(_) => {
                 let doc = format!("value = {}", value);
-                let doc: toml::Value = doc.parse().map_err(|e| {
-                    format!("failed to parse '{}' as TOML: {}", value, e)
-                })?;
+                let doc: toml::Value = doc
+                    .parse()
+                    .map_err(|e| format!("failed to parse '{}' as TOML: {}", value, e))?;
                 doc.get("value").cloned().unwrap()
             }
         };
@@ -828,7 +886,9 @@ impl AppConfig {
                 if let toml::Value::String(host) = parsed {
                     self.daemon.bind_host = host;
                 } else {
-                    return Err(format!("daemon.bind_host must be a string, got '{}'", value).into());
+                    return Err(
+                        format!("daemon.bind_host must be a string, got '{}'", value).into(),
+                    );
                 }
             }
             ["daemon", "base_url"] => {
@@ -842,7 +902,9 @@ impl AppConfig {
                 if let toml::Value::String(ch) = parsed {
                     self.defaults.channel = Some(ch);
                 } else {
-                    return Err(format!("defaults.channel must be a string, got '{}'", value).into());
+                    return Err(
+                        format!("defaults.channel must be a string, got '{}'", value).into(),
+                    );
                 }
             }
             ["defaults", "format"] => {
@@ -1969,5 +2031,102 @@ poll_interval_secs = 9
         let config = AppConfig::load_or_default(&path).unwrap();
         assert!(config.monitors.workspace.is_empty());
         assert!(config.validate().is_ok());
+    }
+
+    // ---------------------------------------------------------------------------
+    // VAL-CONFIG-001: Config loads from hermip.toml in current directory
+    // ---------------------------------------------------------------------------
+    #[test]
+    fn config_loads_from_hermip_toml_in_cwd() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("hermip.toml");
+
+        std::fs::write(
+            &path,
+            r#"[daemon]
+port = 25294
+"#,
+        )
+        .unwrap();
+
+        let config = AppConfig::load_or_default(&path).unwrap();
+        assert_eq!(config.daemon.port, 25294);
+    }
+
+    // ---------------------------------------------------------------------------
+    // VAL-CONFIG-004: Invalid TOML produces clear parse error with file path and line
+    // ---------------------------------------------------------------------------
+    #[test]
+    fn invalid_toml_produces_error_with_file_path() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("hermip.toml");
+
+        // TOML syntax error: unclosed table bracket
+        std::fs::write(&path, "[daemon\nport = ").unwrap();
+
+        let result = AppConfig::load_or_default(&path);
+        let error = result.expect_err("should fail on malformed TOML");
+        let error_msg = error.to_string();
+
+        // Error should reference the file path.
+        assert!(
+            error_msg.contains("hermip.toml") || error_msg.contains(" hermip.toml"),
+            "error should mention the file path, got: {error_msg}"
+        );
+    }
+
+    // ---------------------------------------------------------------------------
+    // VAL-CONFIG-005: Missing optional sections use sensible defaults
+    // ---------------------------------------------------------------------------
+    #[test]
+    fn minimal_daemon_only_config_uses_defaults() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("hermip.toml");
+
+        std::fs::write(&path, "[daemon]\nport = 25294\n").unwrap();
+
+        let config = AppConfig::load_or_default(&path).unwrap();
+
+        assert_eq!(config.daemon.port, 25294);
+        assert_eq!(
+            config.defaults.format,
+            crate::events::MessageFormat::Compact
+        );
+        assert!(config.routes.is_empty());
+        assert!(config.monitors.workspace.is_empty());
+        assert!(config.cron.jobs.is_empty());
+    }
+
+    // ---------------------------------------------------------------------------
+    // VAL-CONFIG-007: Legacy [discord] format still works
+    // ---------------------------------------------------------------------------
+    #[test]
+    fn legacy_discord_format_still_works() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("hermip.toml");
+
+        // Old ClawHip format.
+        std::fs::write(
+            &path,
+            r#"[discord]
+token = "legacy-discord-token"
+default_channel = "legacy-default-channel"
+"#,
+        )
+        .unwrap();
+
+        let config = AppConfig::load_or_default(&path).unwrap();
+
+        // Legacy values should be migrated to providers.discord.
+        assert_eq!(
+            config.providers.discord.bot_token.as_deref(),
+            Some("legacy-discord-token")
+        );
+        assert_eq!(
+            config.defaults.channel.as_deref(),
+            Some("legacy-default-channel")
+        );
+        // The legacy [discord] struct should be cleared.
+        assert!(config.discord.bot_token.is_none());
     }
 }

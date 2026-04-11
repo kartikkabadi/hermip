@@ -93,7 +93,9 @@ async fn real_main() -> Result<()> {
             if let Some(t) = r#type {
                 event.kind = t;
             }
-            if let Some(s) = source && let Some(payload) = event.payload.as_object_mut() {
+            if let Some(s) = source
+                && let Some(payload) = event.payload.as_object_mut()
+            {
                 payload.insert("source".into(), serde_json::json!(s));
             }
             send_incoming_event(&client, event).await

@@ -10,8 +10,8 @@ use serde_json::{Map, Value, json};
 use crate::Result;
 use crate::cli::{HookInstallScope, HookProvider, HooksInstallArgs, HooksUninstallArgs};
 use crate::native_hooks::{
-    CLAUDE_SETTINGS_FILE, CLAWHIP_PROJECT_FILE, CODEX_HOOKS_FILE, HERMES_PLUGIN_DIR,
-    HOOK_SCRIPT, SHARED_HOOK_EVENTS, generated_hook_script,
+    CLAUDE_SETTINGS_FILE, CLAWHIP_PROJECT_FILE, CODEX_HOOKS_FILE, HERMES_PLUGIN_DIR, HOOK_SCRIPT,
+    SHARED_HOOK_EVENTS, generated_hook_script,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -98,13 +98,16 @@ fn run_uninstall(args: &HooksUninstallArgs) -> Result<UninstallReport> {
                     // Remove hooks dir if empty
                     let hooks_dir = plugin_dir.join("hooks");
                     if hooks_dir.exists()
-                        && let Ok(entries) = fs::read_dir(&hooks_dir) && entries.count() == 0
+                        && let Ok(entries) = fs::read_dir(&hooks_dir)
+                        && entries.count() == 0
                     {
                         fs::remove_dir(&hooks_dir)?;
                         removed_dirs.push(hooks_dir);
                     }
                     // Remove plugin dir if empty
-                    if let Ok(entries) = fs::read_dir(&plugin_dir) && entries.count() == 0 {
+                    if let Ok(entries) = fs::read_dir(&plugin_dir)
+                        && entries.count() == 0
+                    {
                         fs::remove_dir(&plugin_dir)?;
                         removed_dirs.push(plugin_dir);
                     }
@@ -146,7 +149,11 @@ fn resolve_uninstall_root(args: &HooksUninstallArgs) -> Result<PathBuf> {
 
 fn selected_uninstall_providers(args: &HooksUninstallArgs) -> Vec<HookProvider> {
     if args.all || args.provider.is_empty() {
-        vec![HookProvider::Codex, HookProvider::ClaudeCode, HookProvider::Hermes]
+        vec![
+            HookProvider::Codex,
+            HookProvider::ClaudeCode,
+            HookProvider::Hermes,
+        ]
     } else {
         args.provider.clone()
     }
@@ -154,8 +161,8 @@ fn selected_uninstall_providers(args: &HooksUninstallArgs) -> Vec<HookProvider> 
 
 fn remove_hermip_hooks_from_file(path: &Path) -> Result<()> {
     let content = fs::read_to_string(path)?;
-    let mut document: Map<String, Value> = serde_json::from_str(&content)
-        .unwrap_or_else(|_| Map::new());
+    let mut document: Map<String, Value> =
+        serde_json::from_str(&content).unwrap_or_else(|_| Map::new());
 
     if let Some(hooks) = document.get_mut("hooks").and_then(Value::as_object_mut) {
         // Remove hermip entries from each hook event
@@ -184,7 +191,10 @@ fn remove_hermip_hooks_from_file(path: &Path) -> Result<()> {
         }
     }
 
-    fs::write(path, serde_json::to_string_pretty(&Value::Object(document))? + "\n")?;
+    fs::write(
+        path,
+        serde_json::to_string_pretty(&Value::Object(document))? + "\n",
+    )?;
     Ok(())
 }
 
