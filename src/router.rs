@@ -245,13 +245,24 @@ impl Router {
             });
         }
 
-        let deliveries = if matched_indices.is_empty() {
+        let ordered_matched_indices: Vec<usize> =
+            matching_routes_for(&self.config.routes, &canonical_kind, &context)
+                .into_iter()
+                .filter_map(|matched_route| {
+                    self.config
+                        .routes
+                        .iter()
+                        .position(|route| std::ptr::eq(route, matched_route))
+                })
+                .collect();
+
+        let deliveries = if ordered_matched_indices.is_empty() {
             match self.resolve_delivery(event, None) {
                 Ok(d) => vec![delivery_explanation(&d, None)],
                 Err(_) => vec![],
             }
         } else {
-            matched_indices
+            ordered_matched_indices
                 .iter()
                 .filter_map(|&idx| {
                     let route = &self.config.routes[idx];
