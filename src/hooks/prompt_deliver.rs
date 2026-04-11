@@ -14,6 +14,7 @@ pub const DEFAULT_MAX_ENTERS: u32 = 4;
 const DEFAULT_TUI_TIMEOUT: Duration = Duration::from_secs(30);
 const DEFAULT_POLL_INTERVAL: Duration = Duration::from_millis(500);
 const DEFAULT_VERIFY_DELAY: Duration = Duration::from_millis(350);
+const DEFAULT_PROGRESS_TIMEOUT: Duration = Duration::from_secs(4);
 const PROMPT_SUBMIT_MARKER: &str = ".clawhip/state/prompt-submit.json";
 const NATIVE_HOOK_SCRIPT: &str = ".clawhip/hooks/native-hook.mjs";
 const PROMPT_CHARS: &[char] = &['$', '%', '>', '#', '❯', '›'];
@@ -28,6 +29,7 @@ pub struct PromptDeliverConfig {
     pub tui_timeout: Duration,
     pub poll_interval: Duration,
     pub verify_delay: Duration,
+    pub progress_timeout: Duration,
 }
 
 impl PromptDeliverConfig {
@@ -39,6 +41,7 @@ impl PromptDeliverConfig {
             tui_timeout: DEFAULT_TUI_TIMEOUT,
             poll_interval: DEFAULT_POLL_INTERVAL,
             verify_delay: DEFAULT_VERIFY_DELAY,
+            progress_timeout: DEFAULT_PROGRESS_TIMEOUT,
         }
     }
 }
@@ -52,6 +55,7 @@ impl From<DeliverArgs> for PromptDeliverConfig {
             tui_timeout: DEFAULT_TUI_TIMEOUT,
             poll_interval: DEFAULT_POLL_INTERVAL,
             verify_delay: DEFAULT_VERIFY_DELAY,
+            progress_timeout: DEFAULT_PROGRESS_TIMEOUT,
         }
     }
 }
@@ -86,6 +90,13 @@ struct HookSetup {
     marker_path: PathBuf,
     supported_providers: Vec<ProviderKind>,
     sources: Vec<&'static str>,
+    install_scope: HookDetectionScope,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum HookDetectionScope {
+    Project,
+    Global,
 }
 
 #[derive(Debug, Clone)]
@@ -128,13 +139,24 @@ pub async fn deliver(config: &PromptDeliverConfig) -> Result<DeliveryResult> {
     wait_for_tui_ready(&pane.pane_id, config.tui_timeout, config.poll_interval).await?;
 
     let baseline_marker = read_marker_hash(&hook_setup.marker_path)?;
+    if hook_setup.install_scope == HookDetectionScope::Global {
+        ensure_global_workdir_marker(&hook_setup, &pane.cwd)?;
+    }
     send_literal_keys(&pane.pane_id, &config.prompt).await?;
+    let baseline_pane = capture_pane_hash(&pane.pane_id).await.ok();
 
     for attempt in 1..=config.max_enters.max(1) {
         send_key(&pane.pane_id, "Enter").await?;
         sleep(config.verify_delay).await;
 
         if marker_changed(&hook_setup.marker_path, baseline_marker)? {
+            wait_for_progress_signal(
+                &pane.pane_id,
+                baseline_pane,
+                config.progress_timeout,
+                config.poll_interval,
+            )
+            .await?;
             return Ok(DeliveryResult {
                 delivered: true,
                 enter_attempts: attempt,
@@ -210,38 +232,56 @@ async fn resolve_target_pane(session: &str) -> Result<PaneTarget> {
 
 fn detect_hook_setup(cwd: &Path) -> Result<HookSetup> {
     for directory in cwd.ancestors() {
-        let mut providers = Vec::new();
-        let mut sources = Vec::new();
-        let has_native_script = has_native_prompt_submit_hook_script(directory);
-
-        if has_claude_prompt_submit_hook(directory) && has_native_script {
-            providers.push(ProviderKind::Omc);
-            sources.push(".claude/settings.json + .clawhip/hooks/native-hook.mjs");
-        }
-        if has_codex_prompt_submit_hook(directory) && has_native_script {
-            providers.push(ProviderKind::Omx);
-            sources.push(".codex/hooks.json + .clawhip/hooks/native-hook.mjs");
-        }
-        if has_omx_prompt_submit_hook(directory) && !providers.contains(&ProviderKind::Omx) {
-            providers.push(ProviderKind::Omx);
-            sources.push(".omx/hooks/clawhip.mjs");
-        }
-
-        if !providers.is_empty() {
-            return Ok(HookSetup {
-                workdir: directory.to_path_buf(),
-                marker_path: directory.join(PROMPT_SUBMIT_MARKER),
-                supported_providers: providers,
-                sources,
-            });
+        if let Some(setup) = hook_setup_at(directory, HookDetectionScope::Project) {
+            return Ok(setup);
         }
     }
 
+    if let Some(home) = std::env::var_os("HOME").map(PathBuf::from)
+        && let Some(setup) = hook_setup_at(&home, HookDetectionScope::Global)
+    {
+        return Ok(setup);
+    }
+
     Err(format!(
-        "refusing delivery: '{}' is not inside a repo/workdir with prompt-submit-aware hook setup; run `clawhip hooks install --all --scope project` or install a prompt-submit-aware legacy OMX bridge in .omx/hooks/",
+        "refusing delivery: '{}' is not inside a repo/workdir with prompt-submit-aware hook setup, and no global ~/.codex / ~/.claude clawhip hook install was detected",
         cwd.display()
     )
     .into())
+}
+
+fn hook_setup_at(root: &Path, install_scope: HookDetectionScope) -> Option<HookSetup> {
+    let mut providers = Vec::new();
+    let mut sources = Vec::new();
+    let has_native_script = has_native_prompt_submit_hook_script(root);
+
+    if has_claude_prompt_submit_hook(root) && has_native_script {
+        providers.push(ProviderKind::Omc);
+        sources.push(".claude/settings.json + .clawhip/hooks/native-hook.mjs");
+    }
+    if has_codex_prompt_submit_hook(root) && has_native_script {
+        providers.push(ProviderKind::Omx);
+        sources.push(".codex/hooks.json + .clawhip/hooks/native-hook.mjs");
+    }
+    if install_scope == HookDetectionScope::Project
+        && has_omx_prompt_submit_hook(root)
+        && !providers.contains(&ProviderKind::Omx)
+    {
+        providers.push(ProviderKind::Omx);
+        sources.push(".omx/hooks/clawhip.mjs");
+    }
+
+    if providers.is_empty() {
+        return None;
+    }
+
+    Some(HookSetup {
+        workdir: root.to_path_buf(),
+        marker_path: root.join(PROMPT_SUBMIT_MARKER),
+        supported_providers: providers,
+        sources,
+        install_scope,
+    })
 }
 
 fn has_claude_prompt_submit_hook(root: &Path) -> bool {
@@ -582,6 +622,17 @@ fn read_marker_hash(path: &Path) -> Result<Option<u64>> {
     Ok(Some(content_hash(&fs::read_to_string(path)?)))
 }
 
+fn ensure_global_workdir_marker(hook_setup: &HookSetup, pane_cwd: &Path) -> Result<()> {
+    if hook_setup.install_scope != HookDetectionScope::Global {
+        return Ok(());
+    }
+    let marker_path = pane_cwd.join(PROMPT_SUBMIT_MARKER);
+    if let Some(parent) = marker_path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    Ok(())
+}
+
 fn marker_changed(path: &Path, baseline: Option<u64>) -> Result<bool> {
     let current = read_marker_hash(path)?;
     Ok(match (baseline, current) {
@@ -589,6 +640,39 @@ fn marker_changed(path: &Path, baseline: Option<u64>) -> Result<bool> {
         (Some(before), Some(after)) => before != after,
         _ => false,
     })
+}
+
+async fn wait_for_progress_signal(
+    target: &str,
+    baseline_hash: Option<u64>,
+    timeout: Duration,
+    poll_interval: Duration,
+) -> Result<()> {
+    let deadline = tokio::time::Instant::now() + timeout;
+
+    loop {
+        if let Some(before) = baseline_hash {
+            if let Ok(current) = capture_pane_hash(target).await
+                && current != before
+            {
+                return Ok(());
+            }
+        } else if capture_pane_hash(target).await.is_ok() {
+            return Ok(());
+        }
+
+        if tokio::time::Instant::now() >= deadline {
+            let last_line = capture_last_line(target).await.unwrap_or_default();
+            return Err(format!(
+                "prompt submit recorded, but no bounded progress signal appeared within {:?} (last line: {})",
+                timeout,
+                format_last_line(&last_line),
+            )
+            .into());
+        }
+
+        sleep(poll_interval).await;
+    }
 }
 
 async fn wait_for_tui_ready(
@@ -639,6 +723,22 @@ async fn capture_last_line(target: &str) -> Result<String> {
     Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
 }
 
+async fn capture_pane_hash(target: &str) -> Result<u64> {
+    let output = Command::new(tmux_bin())
+        .arg("capture-pane")
+        .arg("-p")
+        .arg("-t")
+        .arg(target)
+        .arg("-S")
+        .arg("-200")
+        .output()
+        .await?;
+    if !output.status.success() {
+        return Err(tmux_stderr(&output.stderr).into());
+    }
+    Ok(content_hash(&String::from_utf8(output.stdout)?))
+}
+
 async fn send_literal_keys(target: &str, text: &str) -> Result<()> {
     let output = Command::new(tmux_bin())
         .arg("send-keys")
@@ -684,6 +784,7 @@ fn tmux_stderr(stderr: &[u8]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serial_test::serial;
     use std::os::unix::fs::PermissionsExt;
     use tempfile::tempdir;
 
@@ -712,6 +813,7 @@ mod tests {
         assert_eq!(config.tui_timeout, Duration::from_secs(30));
         assert_eq!(config.poll_interval, Duration::from_millis(500));
         assert_eq!(config.verify_delay, Duration::from_millis(350));
+        assert_eq!(config.progress_timeout, Duration::from_secs(4));
     }
 
     #[test]
@@ -760,9 +862,16 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn detect_hook_setup_rejects_old_omx_bridge_without_prompt_submit_support() {
         let tempdir = tempdir().expect("tempdir");
         let repo = tempdir.path().join("repo");
+        let fake_home = tempdir.path().join("home");
+        fs::create_dir_all(&fake_home).expect("create fake home");
+        let previous_home = std::env::var_os("HOME");
+        unsafe {
+            std::env::set_var("HOME", &fake_home);
+        }
         let hook_dir = repo.join(".omx/hooks");
         fs::create_dir_all(&hook_dir).expect("create hook dir");
         fs::write(
@@ -773,6 +882,16 @@ mod tests {
 
         let error = detect_hook_setup(&repo).expect_err("old bridge should be rejected");
         assert!(error.to_string().contains("prompt-submit-aware hook setup"));
+
+        if let Some(previous) = previous_home {
+            unsafe {
+                std::env::set_var("HOME", previous);
+            }
+        } else {
+            unsafe {
+                std::env::remove_var("HOME");
+            }
+        }
     }
 
     #[test]
@@ -824,6 +943,7 @@ mod tests {
             marker_path: PathBuf::from("/tmp/repo/.clawhip/state/prompt-submit.json"),
             supported_providers: vec![ProviderKind::Omx],
             sources: vec![".codex/hooks.json + .clawhip/hooks/native-hook.mjs"],
+            install_scope: HookDetectionScope::Project,
         };
         assert_eq!(
             infer_provider_from_hook_setup(&setup).unwrap(),
@@ -838,6 +958,89 @@ mod tests {
     }
 
     #[tokio::test]
+    #[serial]
+    async fn deliver_fails_when_prompt_submit_records_but_pane_shows_no_progress() {
+        let tempdir = tempdir().expect("tempdir");
+        let workdir = tempdir.path().join("repo");
+        fs::create_dir_all(workdir.join(".codex")).expect("create codex dir");
+        fs::create_dir_all(workdir.join(".clawhip/hooks")).expect("create hook dir");
+        fs::write(
+            workdir.join(".codex/hooks.json"),
+            r#"{"hooks":{"UserPromptSubmit":[{"hooks":[{"type":"command","command":"node ./.clawhip/hooks/native-hook.mjs --provider codex"}]}]}}"#,
+        )
+        .expect("write codex hooks");
+        fs::write(
+            workdir.join(".clawhip/hooks/native-hook.mjs"),
+            "function maybeWritePromptSubmitState() { return '.clawhip/state/prompt-submit.json'; }\n",
+        )
+        .expect("write native hook");
+
+        let state_dir = tempdir.path().join("fake-tmux-idle");
+        fs::create_dir_all(&state_dir).expect("create fake state dir");
+        let marker_path = workdir.join(PROMPT_SUBMIT_MARKER);
+        let marker_dir = marker_path.parent().expect("marker dir");
+        let tmux_path = tempdir.path().join("fake-tmux-idle.sh");
+        fs::write(
+            &tmux_path,
+            format!(
+                "#!/usr/bin/env bash\nset -euo pipefail\nSTATE_DIR={state}\nMARKER={marker}\nMARKER_DIR={marker_dir}\nCMD=\"$1\"\nshift\ncase \"$CMD\" in\n  display-message)\n    while [ $# -gt 0 ]; do\n      case \"$1\" in\n        -p) shift ;;\n        -t) shift 2 ;;\n        *) FORMAT=\"$1\"; shift ;;\n      esac\n    done\n    printf 'issue-206\\t%%1\\t999999\\tcodex\\t%s\\n' {cwd}\n    ;;\n  capture-pane)\n    cat \"$STATE_DIR/capture.txt\" 2>/dev/null || true\n    ;;\n  send-keys)\n    LITERAL=0\n    while [ $# -gt 0 ]; do\n      case \"$1\" in\n        -t) shift 2 ;;\n        -l) LITERAL=1; shift; TEXT=\"$1\"; shift ;;\n        *) KEY=\"$1\"; shift ;;\n      esac\n    done\n    if [ \"$LITERAL\" -eq 1 ]; then\n      printf '%s\\n' \"$TEXT\" > \"$STATE_DIR/prompt.txt\"\n      printf '%s\\n' 'idle-prompt-surface' > \"$STATE_DIR/capture.txt\"\n    else\n      mkdir -p \"$MARKER_DIR\"\n      printf '{{\"attempt\":1}}\\n' > \"$MARKER\"\n      printf '%s\\n' 'idle-prompt-surface' > \"$STATE_DIR/capture.txt\"\n    fi\n    ;;\n  *)\n    echo \"unsupported fake tmux command: $CMD\" >&2\n    exit 1\n    ;;\nesac\n",
+                state = shell_escape_path(&state_dir),
+                marker = shell_escape_path(&marker_path),
+                marker_dir = shell_escape_path(marker_dir),
+                cwd = shell_escape_path(&workdir),
+            ),
+        )
+        .expect("write fake tmux");
+        let mut perms = fs::metadata(&tmux_path).expect("metadata").permissions();
+        perms.set_mode(0o755);
+        fs::set_permissions(&tmux_path, perms).expect("chmod fake tmux");
+
+        let fake_home = tempdir.path().join("home");
+        fs::create_dir_all(&fake_home).expect("create fake home");
+        let previous_home = std::env::var_os("HOME");
+        let previous_tmux = std::env::var_os("CLAWHIP_TMUX_BIN");
+        unsafe {
+            std::env::set_var("HOME", &fake_home);
+            std::env::set_var("CLAWHIP_TMUX_BIN", &tmux_path);
+        }
+
+        let config = PromptDeliverConfig {
+            session: "issue-206".into(),
+            prompt: "Ship the fix".into(),
+            max_enters: 1,
+            tui_timeout: Duration::from_millis(50),
+            poll_interval: Duration::from_millis(10),
+            verify_delay: Duration::from_millis(10),
+            progress_timeout: Duration::from_millis(30),
+        };
+
+        let error = deliver(&config)
+            .await
+            .expect_err("idle pane should fail fast");
+        assert!(error.to_string().contains("no bounded progress signal"));
+
+        if let Some(previous) = previous_tmux {
+            unsafe {
+                std::env::set_var("CLAWHIP_TMUX_BIN", previous);
+            }
+        } else {
+            unsafe {
+                std::env::remove_var("CLAWHIP_TMUX_BIN");
+            }
+        }
+        if let Some(previous) = previous_home {
+            unsafe {
+                std::env::set_var("HOME", previous);
+            }
+        } else {
+            unsafe {
+                std::env::remove_var("HOME");
+            }
+        }
+    }
+
+    #[tokio::test]
+    #[serial]
     async fn deliver_retries_enter_until_prompt_submit_marker_changes() {
         let tempdir = tempdir().expect("tempdir");
         let workdir = tempdir.path().join("repo");
@@ -874,8 +1077,12 @@ mod tests {
         perms.set_mode(0o755);
         fs::set_permissions(&tmux_path, perms).expect("chmod fake tmux");
 
+        let fake_home = tempdir.path().join("home");
+        fs::create_dir_all(&fake_home).expect("create fake home");
+        let previous_home = std::env::var_os("HOME");
         let previous_tmux = std::env::var_os("CLAWHIP_TMUX_BIN");
         unsafe {
+            std::env::set_var("HOME", &fake_home);
             std::env::set_var("CLAWHIP_TMUX_BIN", &tmux_path);
         }
 
@@ -886,6 +1093,7 @@ mod tests {
             tui_timeout: Duration::from_millis(50),
             poll_interval: Duration::from_millis(10),
             verify_delay: Duration::from_millis(10),
+            progress_timeout: Duration::from_millis(40),
         };
 
         let result = deliver(&config).await.expect("deliver");
@@ -901,6 +1109,15 @@ mod tests {
         } else {
             unsafe {
                 std::env::remove_var("CLAWHIP_TMUX_BIN");
+            }
+        }
+        if let Some(previous) = previous_home {
+            unsafe {
+                std::env::set_var("HOME", previous);
+            }
+        } else {
+            unsafe {
+                std::env::remove_var("HOME");
             }
         }
     }

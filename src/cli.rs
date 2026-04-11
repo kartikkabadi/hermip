@@ -674,7 +674,7 @@ pub struct HooksInstallArgs {
     #[arg(long, value_enum, action = ArgAction::Append)]
     pub provider: Vec<HookProvider>,
     /// Install at the project root or in the user's global provider config.
-    #[arg(long, value_enum, default_value_t = HookInstallScope::Project)]
+    #[arg(long, value_enum, default_value_t = HookInstallScope::Global)]
     pub scope: HookInstallScope,
     /// Project root for project-scoped install. Defaults to the current directory.
     #[arg(long)]
