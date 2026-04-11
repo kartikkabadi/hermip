@@ -403,7 +403,11 @@ pub(crate) fn repo_display_name(repo: &GitRepoMonitor) -> String {
 }
 
 pub(crate) fn git_bin() -> String {
-    std::env::var("CLAWHIP_GIT_BIN").unwrap_or_else(|_| "git".to_string())
+    std::env::var("HERMIP_GIT_BIN")
+        .ok()
+        .filter(|v| !v.trim().is_empty())
+        .or_else(|| std::env::var("CLAWHIP_GIT_BIN").ok().filter(|v| !v.trim().is_empty()))
+        .unwrap_or_else(|| "git".to_string())
 }
 
 fn discovery_state_key(repo: &GitRepoMonitor) -> String {

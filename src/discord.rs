@@ -72,8 +72,11 @@ impl DiscordClient {
         } else {
             None
         };
-        let api_base = std::env::var("CLAWHIP_DISCORD_API_BASE")
-            .unwrap_or_else(|_| "https://discord.com/api/v10".to_string());
+        let api_base = std::env::var("HERMIP_DISCORD_API_BASE")
+            .ok()
+            .filter(|v| !v.trim().is_empty())
+            .or_else(|| std::env::var("CLAWHIP_DISCORD_API_BASE").ok())
+            .unwrap_or_else(|| "https://discord.com/api/v10".to_string());
         let webhook_client = reqwest::Client::new();
 
         Ok(Self {
@@ -569,11 +572,11 @@ mod tests {
         // Build a DiscordClient with no bot token (no env, no config).
         // Use a bogus env override so we never hit the real API.
         unsafe {
-            std::env::set_var("CLAWHIP_DISCORD_API_BASE", "http://127.0.0.1:1");
+            std::env::set_var("HERMIP_DISCORD_API_BASE", "http://127.0.0.1:1");
         }
         let client = DiscordClient::from_config(Arc::new(AppConfig::default())).unwrap();
         unsafe {
-            std::env::remove_var("CLAWHIP_DISCORD_API_BASE");
+            std::env::remove_var("HERMIP_DISCORD_API_BASE");
         }
         // Config has no bot token and no webhook route; lookup should skip.
         let lookup = client.lookup_channel("1111").await;

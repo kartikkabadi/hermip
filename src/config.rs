@@ -11,6 +11,20 @@ use crate::Result;
 use crate::events::MessageFormat;
 use crate::source::workspace::{default_workspace_debounce_ms, default_workspace_watch_dirs};
 
+/// Check a primary env var first, falling back to a legacy name.
+/// Returns `Some(value)` if either is set and non-empty, preferring the primary.
+/// Returns `None` if neither is set.
+fn env_var_or_fallback(primary: &str, fallback: &str) -> Option<String> {
+    env::var(primary)
+        .ok()
+        .filter(|v| !v.trim().is_empty())
+        .or_else(|| {
+            env::var(fallback)
+                .ok()
+                .filter(|v| !v.trim().is_empty())
+        })
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct AppConfig {
     #[serde(default, skip_serializing_if = "DiscordConfig::is_empty")]
@@ -496,7 +510,11 @@ pub fn default_sink_name() -> String {
     "discord".to_string()
 }
 
-const DISCORD_TOKEN_ENV_VARS: [&str; 2] = ["DISCORD_TOKEN", "CLAWHIP_DISCORD_BOT_TOKEN"];
+const DISCORD_TOKEN_ENV_VARS: [&str; 3] = [
+    "DISCORD_TOKEN",
+    "HERMIP_DISCORD_BOT_TOKEN",
+    "CLAWHIP_DISCORD_BOT_TOKEN",
+];
 pub const CONFIG_EDITOR_MENU_ITEMS: [&str; 8] = [
     "Set Discord bot token",
     "Set daemon base URL",
@@ -1160,15 +1178,13 @@ impl AppConfig {
     }
 
     pub fn daemon_base_url(&self) -> String {
-        env::var("CLAWHIP_DAEMON_URL")
-            .ok()
+        env_var_or_fallback("HERMIP_DAEMON_URL", "CLAWHIP_DAEMON_URL")
             .filter(|value| !value.trim().is_empty())
             .unwrap_or_else(|| self.daemon.base_url.clone())
     }
 
     pub fn monitor_github_token(&self) -> Option<String> {
-        env::var("CLAWHIP_GITHUB_TOKEN")
-            .ok()
+        env_var_or_fallback("HERMIP_GITHUB_TOKEN", "CLAWHIP_GITHUB_TOKEN")
             .filter(|value| !value.trim().is_empty())
             .or_else(|| self.monitors.github_token.clone())
     }
@@ -1440,7 +1456,22 @@ mod tests {
     }
 
     #[test]
-    fn legacy_env_token_is_still_supported() {
+    fn hermip_env_token_is_preferred_over_legacy() {
+        let config = AppConfig::default();
+
+        // When both HERMIP_ and CLAWHIP_ are set, HERMIP_ wins.
+        let token = config.effective_token_with(|name| {
+            match name {
+                "HERMIP_DISCORD_BOT_TOKEN" => Some("hermip-token".to_string()),
+                "CLAWHIP_DISCORD_BOT_TOKEN" => Some("legacy-token".to_string()),
+                _ => None,
+            }
+        });
+        assert_eq!(token.as_deref(), Some("hermip-token"));
+    }
+
+    #[test]
+    fn legacy_env_token_is_still_supported_as_fallback() {
         let config = AppConfig::default();
 
         let token = config.effective_token_with(|name| {

@@ -833,7 +833,11 @@ pub(crate) fn last_nonempty_line(content: &str) -> String {
 }
 
 pub(crate) fn tmux_bin() -> String {
-    std::env::var("CLAWHIP_TMUX_BIN").unwrap_or_else(|_| "tmux".to_string())
+    std::env::var("HERMIP_TMUX_BIN")
+        .ok()
+        .filter(|v| !v.trim().is_empty())
+        .or_else(|| std::env::var("CLAWHIP_TMUX_BIN").ok().filter(|v| !v.trim().is_empty()))
+        .unwrap_or_else(|| "tmux".to_string())
 }
 
 fn tmux_stderr(stderr: &[u8]) -> String {

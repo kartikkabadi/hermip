@@ -6,7 +6,8 @@ use serde::Deserialize;
 
 use crate::Result;
 
-const PLUGIN_DIR_ENV: &str = "CLAWHIP_PLUGIN_DIR";
+const PLUGIN_DIR_ENV: &str = "HERMIP_PLUGIN_DIR";
+const PLUGIN_DIR_ENV_LEGACY: &str = "CLAWHIP_PLUGIN_DIR";
 
 #[derive(Debug, Clone, Deserialize)]
 struct PluginManifest {
@@ -93,11 +94,14 @@ fn resolve_plugins_dir() -> Option<PathBuf> {
 fn plugin_dir_candidates() -> Vec<PathBuf> {
     let mut candidates = Vec::new();
 
-    if let Some(dir) = env::var_os(PLUGIN_DIR_ENV)
-        .map(PathBuf::from)
-        .filter(|path| !path.as_os_str().is_empty())
-    {
-        candidates.push(dir);
+    // Check HERMIP_PLUGIN_DIR first (primary), then CLAWHIP_PLUGIN_DIR (legacy fallback).
+    for env_name in [PLUGIN_DIR_ENV, PLUGIN_DIR_ENV_LEGACY] {
+        if let Some(dir) = env::var_os(env_name)
+            .map(PathBuf::from)
+            .filter(|path| !path.as_os_str().is_empty())
+        {
+            candidates.push(dir);
+        }
     }
 
     candidates.push(app_plugins_dir());

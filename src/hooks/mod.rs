@@ -10,7 +10,7 @@ use serde_json::{Map, Value, json};
 use crate::Result;
 use crate::cli::{HookInstallScope, HookProvider, HooksInstallArgs, HooksUninstallArgs};
 use crate::native_hooks::{
-    CLAUDE_SETTINGS_FILE, CLAWHIP_PROJECT_FILE, CODEX_HOOKS_FILE, HERMES_PLUGIN_DIR, HOOK_SCRIPT,
+    CLAUDE_SETTINGS_FILE, CODEX_HOOKS_FILE, HERMES_PLUGIN_DIR, HERMIP_PROJECT_FILE, HOOK_SCRIPT,
     SHARED_HOOK_EVENTS, generated_hook_script,
 };
 
@@ -123,7 +123,7 @@ fn run_uninstall(args: &HooksUninstallArgs) -> Result<UninstallReport> {
             fs::remove_file(&hook_script)?;
             removed_files.push(hook_script);
         }
-        let metadata = root.join(CLAWHIP_PROJECT_FILE);
+        let metadata = root.join(HERMIP_PROJECT_FILE);
         if metadata.exists() {
             fs::remove_file(&metadata)?;
             removed_files.push(metadata);
@@ -630,7 +630,7 @@ fn hook_command_matches(hook: &Value, command: &str) -> bool {
 }
 
 fn ensure_project_metadata(root: &Path, force: bool) -> Result<PathBuf> {
-    let path = root.join(CLAWHIP_PROJECT_FILE);
+    let path = root.join(HERMIP_PROJECT_FILE);
     let project_name = root
         .file_name()
         .and_then(|name| name.to_str())
@@ -745,7 +745,7 @@ mod tests {
         assert!(
             report
                 .generated_files
-                .contains(&canonical_dir.join(CLAWHIP_PROJECT_FILE))
+                .contains(&canonical_dir.join(HERMIP_PROJECT_FILE))
         );
         assert!(
             report
