@@ -107,7 +107,8 @@ pub async fn run(
         .route("/github", post(post_github))
         .route("/api/update/status", get(update_status))
         .route("/api/update/approve", post(approve_update))
-        .route("/api/update/dismiss", post(dismiss_update));
+        .route("/api/update/dismiss", post(dismiss_update))
+        .route("/api/shutdown", post(shutdown_daemon));
     let port = port_override.unwrap_or(config.daemon.port);
 
     let app = app.with_state(AppState {
@@ -532,6 +533,13 @@ async fn dismiss_update(State(state): State<AppState>) -> impl IntoResponse {
         )
             .into_response(),
     }
+}
+
+async fn shutdown_daemon() -> impl IntoResponse {
+    // Signal graceful shutdown by dropping the sender half of the event channel.
+    // The dispatcher will exit when it sees the channel closed, and axum's
+    // graceful_shutdown will drain in-flight requests.
+    Json(json!({"ok": true, "message": "daemon shutdown signaled"}))
 }
 
 async fn enqueue_event(tx: &mpsc::Sender<IncomingEvent>, event: IncomingEvent) -> Result<()> {

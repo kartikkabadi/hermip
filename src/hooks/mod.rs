@@ -8,10 +8,10 @@ use anyhow::anyhow;
 use serde_json::{Map, Value, json};
 
 use crate::Result;
-use crate::cli::{HookInstallScope, HookProvider, HooksInstallArgs};
+use crate::cli::{HookInstallScope, HookProvider, HooksInstallArgs, HooksUninstallArgs};
 use crate::native_hooks::{
-    CLAUDE_SETTINGS_FILE, CLAWHIP_PROJECT_FILE, CODEX_HOOKS_FILE, HOOK_SCRIPT, SHARED_HOOK_EVENTS,
-    generated_hook_script,
+    CLAUDE_SETTINGS_FILE, CLAWHIP_PROJECT_FILE, CODEX_HOOKS_FILE, HERMES_PLUGIN_DIR,
+    HOOK_SCRIPT, SHARED_HOOK_EVENTS, generated_hook_script,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -27,8 +27,164 @@ pub fn install(args: HooksInstallArgs) -> Result<()> {
         println!("  {}", path.display());
     }
     println!("Supported shared events: {}", SHARED_HOOK_EVENTS.join(", "));
-    println!("Ingress: hermip native hook --provider <codex|claude-code>");
+    println!("Ingress: hermip native hook --provider <codex|claude-code|hermes>");
 
+    Ok(())
+}
+
+pub fn uninstall(args: HooksUninstallArgs) -> Result<()> {
+    let report = run_uninstall(&args)?;
+
+    if report.removed_files.is_empty() && report.removed_dirs.is_empty() {
+        println!("No hermip hook files found to remove.");
+    } else {
+        println!("Uninstalled provider-native hook forwarding:");
+        for path in &report.removed_files {
+            println!("  removed file: {}", path.display());
+        }
+        for path in &report.removed_dirs {
+            println!("  removed dir: {}", path.display());
+        }
+    }
+
+    Ok(())
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UninstallReport {
+    pub removed_files: Vec<PathBuf>,
+    pub removed_dirs: Vec<PathBuf>,
+}
+
+fn run_uninstall(args: &HooksUninstallArgs) -> Result<UninstallReport> {
+    let root = resolve_uninstall_root(args)?;
+    let providers = selected_uninstall_providers(args);
+    let mut removed_files = Vec::new();
+    let mut removed_dirs = Vec::new();
+
+    for provider in providers {
+        match provider {
+            HookProvider::Codex => {
+                let path = root.join(CODEX_HOOKS_FILE);
+                if path.exists() {
+                    remove_hermip_hooks_from_file(&path)?;
+                    removed_files.push(path);
+                }
+            }
+            HookProvider::ClaudeCode => {
+                let path = root.join(CLAUDE_SETTINGS_FILE);
+                if path.exists() {
+                    remove_hermip_hooks_from_file(&path)?;
+                    removed_files.push(path);
+                }
+            }
+            HookProvider::Hermes => {
+                let plugin_dir = root.join(HERMES_PLUGIN_DIR);
+                if plugin_dir.exists() {
+                    // Remove hermip-managed files in the plugin directory
+                    let files_to_check = [
+                        plugin_dir.join("plugin.yaml"),
+                        plugin_dir.join("__init__.py"),
+                        plugin_dir.join("hooks.py"),
+                        plugin_dir.join("tools.py"),
+                        plugin_dir.join("hooks").join("native-hook.mjs"),
+                    ];
+                    for path in files_to_check {
+                        if path.exists() {
+                            fs::remove_file(&path)?;
+                            removed_files.push(path);
+                        }
+                    }
+                    // Remove hooks dir if empty
+                    let hooks_dir = plugin_dir.join("hooks");
+                    if hooks_dir.exists()
+                        && let Ok(entries) = fs::read_dir(&hooks_dir) && entries.count() == 0
+                    {
+                        fs::remove_dir(&hooks_dir)?;
+                        removed_dirs.push(hooks_dir);
+                    }
+                    // Remove plugin dir if empty
+                    if let Ok(entries) = fs::read_dir(&plugin_dir) && entries.count() == 0 {
+                        fs::remove_dir(&plugin_dir)?;
+                        removed_dirs.push(plugin_dir);
+                    }
+                }
+            }
+        }
+    }
+
+    // If --clean, also remove the hook script and project metadata
+    if args.clean {
+        let hook_script = root.join(HOOK_SCRIPT);
+        if hook_script.exists() {
+            fs::remove_file(&hook_script)?;
+            removed_files.push(hook_script);
+        }
+        let metadata = root.join(CLAWHIP_PROJECT_FILE);
+        if metadata.exists() {
+            fs::remove_file(&metadata)?;
+            removed_files.push(metadata);
+        }
+    }
+
+    Ok(UninstallReport {
+        removed_files,
+        removed_dirs,
+    })
+}
+
+fn resolve_uninstall_root(args: &HooksUninstallArgs) -> Result<PathBuf> {
+    match args.scope {
+        HookInstallScope::Project => Ok(args
+            .root
+            .clone()
+            .unwrap_or(std::env::current_dir()?)
+            .canonicalize()?),
+        HookInstallScope::Global => home_dir(),
+    }
+}
+
+fn selected_uninstall_providers(args: &HooksUninstallArgs) -> Vec<HookProvider> {
+    if args.all || args.provider.is_empty() {
+        vec![HookProvider::Codex, HookProvider::ClaudeCode, HookProvider::Hermes]
+    } else {
+        args.provider.clone()
+    }
+}
+
+fn remove_hermip_hooks_from_file(path: &Path) -> Result<()> {
+    let content = fs::read_to_string(path)?;
+    let mut document: Map<String, Value> = serde_json::from_str(&content)
+        .unwrap_or_else(|_| Map::new());
+
+    if let Some(hooks) = document.get_mut("hooks").and_then(Value::as_object_mut) {
+        // Remove hermip entries from each hook event
+        for event in SHARED_HOOK_EVENTS {
+            if let Some(event_hooks) = hooks.get_mut(event).and_then(Value::as_array_mut) {
+                // Remove groups that contain only hermip hook commands
+                event_hooks.retain(|group| {
+                    if let Some(obj) = group.as_object() {
+                        if let Some(hooks_arr) = obj.get("hooks").and_then(Value::as_array) {
+                            // Keep group if it has non-hermip hooks
+                            hooks_arr.iter().any(|h| {
+                                if let Some(cmd) = h.get("command").and_then(Value::as_str) {
+                                    !cmd.contains("native-hook.mjs") && !cmd.contains("hermip")
+                                } else {
+                                    true
+                                }
+                            })
+                        } else {
+                            true
+                        }
+                    } else {
+                        true
+                    }
+                });
+            }
+        }
+    }
+
+    fs::write(path, serde_json::to_string_pretty(&Value::Object(document))? + "\n")?;
     Ok(())
 }
 
@@ -50,12 +206,286 @@ fn run_install(args: &HooksInstallArgs) -> Result<InstallReport> {
         let path = match provider {
             HookProvider::Codex => write_codex_hooks(&root, &hook_script_path)?,
             HookProvider::ClaudeCode => write_claude_settings(&root, &hook_script_path)?,
+            HookProvider::Hermes => write_hermes_plugin(&root, &hook_script_path)?,
         };
         generated_files.push(path);
     }
 
     Ok(InstallReport { generated_files })
 }
+
+fn write_hermes_plugin(root: &Path, hook_script_path: &Path) -> Result<PathBuf> {
+    let plugin_dir = root.join(HERMES_PLUGIN_DIR);
+    let mut generated_files = Vec::new();
+
+    // Write plugin.yaml
+    let yaml_path = plugin_dir.join("plugin.yaml");
+    let yaml_content = hermes_plugin_yaml();
+    write_generated_file(&yaml_path, yaml_content, true)?;
+    generated_files.push(yaml_path);
+
+    // Write __init__.py
+    let init_path = plugin_dir.join("__init__.py");
+    write_generated_file(&init_path, HERMES_INIT_PY_CONTENT, true)?;
+    generated_files.push(init_path);
+
+    // Write hooks.py
+    let hooks_path = plugin_dir.join("hooks.py");
+    write_generated_file(&hooks_path, HERMES_HOOKS_PY_CONTENT, true)?;
+    generated_files.push(hooks_path);
+
+    // Write tools.py
+    let tools_path = plugin_dir.join("tools.py");
+    write_generated_file(&tools_path, HERMES_TOOLS_PY_CONTENT, true)?;
+    generated_files.push(tools_path);
+
+    // Write native-hook.mjs in the hermip plugin dir for forwarding
+    let hermip_hook_dir = plugin_dir.join("hooks");
+    let hook_dest = hermip_hook_dir.join("native-hook.mjs");
+    write_generated_file(&hook_dest, generated_hook_script(), true)?;
+    generated_files.push(hook_dest);
+
+    // Register hook script as pre_tool_call and post_tool_call in hooks.py
+    // The hooks.py content already references the hook script via a fixed path.
+    // For the Hermes hook integration to work, the hooks.py must call the hermip daemon.
+    let _ = hook_script_path; // Used via hook_dest path
+    let _ = root;
+
+    Ok(plugin_dir)
+}
+
+fn hermes_plugin_yaml() -> &'static str {
+    r#"name: hermip
+version: "0.1.0"
+description: "Hermip event gateway for Discord, Slack, and Droid Mission notifications"
+provides_hooks:
+  - pre_tool_call
+  - post_tool_call
+  - on_session_start
+  - on_session_end
+  - pre_llm_call
+  - post_llm_call
+provides_tools:
+  - name: send-event
+    description: "Send an event to the Hermip daemon"
+  - name: config-verify
+    description: "Verify Hermip webhook bindings"
+"#
+}
+
+const HERMES_INIT_PY_CONTENT: &str = r#""""Hermip plugin for Hermes Agent."""
+
+import json
+import subprocess
+import sys
+
+
+def register(ctx):
+    """Register hook handlers and tools with Hermes Agent."""
+    return {
+        "hooks": {
+            "pre_tool_call": "hooks.pre_tool_call",
+            "post_tool_call": "hooks.post_tool_call",
+            "on_session_start": "hooks.on_session_start",
+            "on_session_end": "hooks.on_session_end",
+            "pre_llm_call": "hooks.pre_llm_call",
+            "post_llm_call": "hooks.post_llm_call",
+        },
+        "tools": {
+            "send-event": "tools.send_event",
+            "config-verify": "tools.config_verify",
+        },
+    }
+
+
+def forward_event(event_name: str, payload: dict) -> None:
+    """Forward an event to the Hermip daemon."""
+    try:
+        daemon_url = "http://localhost:25294"
+        full_payload = {
+            "provider": "hermes",
+            "event_name": event_name,
+            **payload,
+        }
+        result = subprocess.run(
+            [
+                sys.executable,
+                "-c",
+                f"""
+import urllib.request
+import json
+payload = json.dumps({full_payload}).encode()
+req = urllib.request.Request('{daemon_url}/api/native/hook', data=payload, headers={{'Content-Type': 'application/json'}})
+urllib.request.urlopen(req)
+""",
+            ],
+            capture_output=True,
+            timeout=5,
+        )
+    except Exception:
+        pass  # Best-effort forwarding
+"#;
+
+const HERMES_HOOKS_PY_CONTENT: &str = r#""""Hermip hook handlers for Hermes Agent."""
+
+import json
+import os
+import subprocess
+import sys
+import time
+from pathlib import Path
+
+DAEMON_URL = os.environ.get("HERMIP_DAEMON_URL", "http://localhost:25294")
+
+
+def forward_to_hermip(event_name: str, context: dict) -> None:
+    """Send a hook event to the Hermip daemon."""
+    try:
+        import urllib.request
+
+        payload = {
+            "provider": "hermes",
+            "event_name": event_name,
+            "directory": os.getcwd(),
+            "context": context,
+        }
+        data = json.dumps(payload).encode("utf-8")
+        req = urllib.request.Request(
+            f"{DAEMON_URL}/api/native/hook",
+            data=data,
+            headers={"Content-Type": "application/json"},
+        )
+        with urllib.request.urlopen(req, timeout=5) as response:
+            return response.status == 202
+    except Exception:
+        return False
+
+
+def pre_tool_call(tool_name: str, tool_input: dict, context: dict) -> dict:
+    """Called before a tool is invoked."""
+    forward_to_hermip("PreToolUse", {
+        "tool_name": tool_name,
+        "tool_input": tool_input,
+        "session_id": context.get("session_id"),
+    })
+    return {}
+
+
+def post_tool_call(tool_name: str, tool_input: dict, tool_output: dict, context: dict) -> dict:
+    """Called after a tool completes."""
+    forward_to_hermip("PostToolUse", {
+        "tool_name": tool_name,
+        "tool_input": tool_input,
+        "tool_output": tool_output,
+        "session_id": context.get("session_id"),
+    })
+    return {}
+
+
+def on_session_start(session_id: str, context: dict) -> None:
+    """Called when a new session starts."""
+    forward_to_hermip("SessionStart", {
+        "session_id": session_id,
+        "cwd": context.get("cwd", os.getcwd()),
+    })
+
+
+def on_session_end(session_id: str, context: dict) -> None:
+    """Called when a session ends."""
+    forward_to_hermip("Stop", {
+        "session_id": session_id,
+    })
+
+
+def pre_llm_call(model: str, prompt: str, context: dict) -> dict:
+    """Called before an LLM call."""
+    forward_to_hermip("PreToolUse", {
+        "tool_name": "llm",
+        "tool_input": {"model": model, "prompt": prompt[:200]},
+        "session_id": context.get("session_id"),
+    })
+    return {}
+
+
+def post_llm_call(model: str, prompt: str, response: str, context: dict) -> dict:
+    """Called after an LLM call completes."""
+    forward_to_hermip("PostToolUse", {
+        "tool_name": "llm",
+        "tool_input": {"model": model, "prompt": prompt[:200]},
+        "tool_output": {"response": response[:200]},
+        "session_id": context.get("session_id"),
+    })
+    return {}
+"#;
+
+const HERMES_TOOLS_PY_CONTENT: &str = r#""""Hermip tools for Hermes Agent."""
+
+import json
+import subprocess
+import sys
+
+
+def send_event(event_type: str, source: str = "hermes", channel: str = None, message: str = "") -> dict:
+    """Send an event to the Hermip daemon.
+
+    Args:
+        event_type: The event type (e.g. mission.started, feature.completed)
+        source: The event source (default: hermes)
+        channel: Optional channel override
+        message: Optional message text
+
+    Returns:
+        A dict with ok=true and the event_id on success.
+    """
+    import urllib.request
+
+    daemon_url = "http://localhost:25294"
+    payload = {
+        "provider": "hermes",
+        "event_name": event_type,
+        "source": source,
+        "channel": channel,
+        "message": message,
+        "directory": "",
+    }
+    data = json.dumps(payload).encode("utf-8")
+    req = urllib.request.Request(
+        f"{daemon_url}/api/native/hook",
+        data=data,
+        headers={"Content-Type": "application/json"},
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=10) as response:
+            result = json.loads(response.read())
+            return result
+    except urllib.error.URLError as e:
+        return {"ok": False, "error": str(e)}
+
+
+def config_verify() -> dict:
+    """Verify Hermip webhook bindings against live Discord API.
+
+    Runs `hermip config verify-bindings` and returns the result.
+
+    Returns:
+        A dict with ok=true and verification results on success.
+    """
+    try:
+        result = subprocess.run(
+            ["hermip", "config", "verify-bindings"],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        return {
+            "ok": result.returncode == 0,
+            "stdout": result.stdout,
+            "stderr": result.stderr,
+            "exit_code": result.returncode,
+        }
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+"#;
 
 fn resolve_install_root(args: &HooksInstallArgs) -> Result<PathBuf> {
     match args.scope {

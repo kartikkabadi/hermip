@@ -80,6 +80,22 @@ impl DaemonClient {
         }
     }
 
+    pub async fn shutdown(&self) -> Result<()> {
+        let response = self
+            .http
+            .post(format!("{}/api/shutdown", self.base_url))
+            .json(&serde_json::json!({}))
+            .send()
+            .await?;
+        if response.status().is_success() || response.status().as_u16() == 202 {
+            Ok(())
+        } else {
+            let status = response.status();
+            let body = response.text().await.unwrap_or_default();
+            Err(format!("daemon shutdown failed with {status}: {body}").into())
+        }
+    }
+
     pub async fn post_update_action(&self, action: &str) -> Result<Value> {
         let response = self
             .http

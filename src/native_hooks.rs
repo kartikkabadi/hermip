@@ -16,6 +16,8 @@ pub const PROJECT_METADATA_RELATIVE_PATH: &str = CLAWHIP_PROJECT_FILE;
 pub const NATIVE_HOOK_SCRIPT_RELATIVE_PATH: &str = HOOK_SCRIPT;
 pub const CODEX_HOOKS_FILE: &str = ".codex/hooks.json";
 pub const CLAUDE_SETTINGS_FILE: &str = ".claude/settings.json";
+#[allow(dead_code)]
+pub const HERMES_PLUGIN_DIR: &str = ".hermes/plugins/hermip";
 pub const SHARED_HOOK_EVENTS: [&str; 5] = [
     "SessionStart",
     "PreToolUse",

@@ -794,6 +794,110 @@ impl AppConfig {
         Ok(())
     }
 
+    /// Apply a single key=value update to the config.
+    ///
+    /// Keys use dot-notation to set nested fields, e.g. `daemon.port = 30999`.
+    /// Values are parsed as TOML syntax. For bare integers or booleans, the value
+    /// is parsed directly. For strings (including those representing integers like
+    /// "25295"), wrap in quotes: `"25295"`.
+    pub fn set_from_key_value(&mut self, key: &str, value: &str) -> Result<()> {
+        // Try parsing as a bare TOML value first (integers, floats, booleans, strings in quotes).
+        // If that fails, try wrapping in a TOML document fragment.
+        let parsed: toml::Value = match value.parse::<toml::Value>() {
+            Ok(v) => v,
+            Err(_) => {
+                let doc = format!("value = {}", value);
+                let doc: toml::Value = doc.parse().map_err(|e| {
+                    format!("failed to parse '{}' as TOML: {}", value, e)
+                })?;
+                doc.get("value").cloned().unwrap()
+            }
+        };
+
+        let parts: Vec<&str> = key.split('.').collect();
+
+        match parts.as_slice() {
+            ["daemon", "port"] => {
+                if let toml::Value::Integer(port) = parsed {
+                    self.daemon.port = port as u16;
+                } else {
+                    return Err(format!("daemon.port must be an integer, got '{}'", value).into());
+                }
+            }
+            ["daemon", "bind_host"] => {
+                if let toml::Value::String(host) = parsed {
+                    self.daemon.bind_host = host;
+                } else {
+                    return Err(format!("daemon.bind_host must be a string, got '{}'", value).into());
+                }
+            }
+            ["daemon", "base_url"] => {
+                if let toml::Value::String(url) = parsed {
+                    self.daemon.base_url = url;
+                } else {
+                    return Err(format!("daemon.base_url must be a string, got '{}'", value).into());
+                }
+            }
+            ["defaults", "channel"] => {
+                if let toml::Value::String(ch) = parsed {
+                    self.defaults.channel = Some(ch);
+                } else {
+                    return Err(format!("defaults.channel must be a string, got '{}'", value).into());
+                }
+            }
+            ["defaults", "format"] => {
+                if let toml::Value::String(fmt) = parsed {
+                    self.defaults.format = crate::events::MessageFormat::from_label(&fmt)
+                        .map_err(|e| format!("invalid defaults.format '{}': {}", fmt, e))?;
+                } else {
+                    return Err(format!("defaults.format must be a string, got '{}'", value).into());
+                }
+            }
+            ["providers", "discord", "bot_token"] => {
+                if let toml::Value::String(token) = parsed {
+                    self.providers.discord.bot_token = Some(token);
+                } else {
+                    return Err(format!(
+                        "providers.discord.bot_token must be a string, got '{}'",
+                        value
+                    )
+                    .into());
+                }
+            }
+            ["dispatch", "ci_batch_window_secs"] => {
+                if let toml::Value::Integer(v) = parsed {
+                    self.dispatch.ci_batch_window_secs = v as u64;
+                } else {
+                    return Err(format!(
+                        "dispatch.ci_batch_window_secs must be an integer, got '{}'",
+                        value
+                    )
+                    .into());
+                }
+            }
+            ["dispatch", "routine_batch_window_secs"] => {
+                if let toml::Value::Integer(v) = parsed {
+                    self.dispatch.routine_batch_window_secs = v as u64;
+                } else {
+                    return Err(format!(
+                        "dispatch.routine_batch_window_secs must be an integer, got '{}'",
+                        value
+                    )
+                    .into());
+                }
+            }
+            _ => {
+                return Err(format!(
+                    "unsupported config key '{}' (supported: daemon.port, daemon.bind_host, daemon.base_url, defaults.channel, defaults.format, providers.discord.bot_token, dispatch.ci_batch_window_secs, dispatch.routine_batch_window_secs)",
+                    key
+                )
+                .into());
+            }
+        }
+
+        Ok(())
+    }
+
     pub fn scaffold_webhook_quickstart(&mut self, webhook: String) -> Result<()> {
         let webhook = normalize_text(Some(webhook)).ok_or_else(|| {
             "setup requires a non-empty webhook URL when --webhook is supplied".to_string()

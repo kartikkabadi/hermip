@@ -41,6 +41,11 @@ pub enum Commands {
         #[arg(long)]
         port: Option<u16>,
     },
+    /// Manage the hermip daemon (start/stop/restart/status).
+    Daemon {
+        #[command(subcommand)]
+        command: DaemonCommands,
+    },
     /// Check daemon health/status.
     Status,
     #[command(
@@ -50,10 +55,16 @@ pub enum Commands {
     Setup(SetupArgs),
     /// Send a custom event to the local daemon.
     Send {
+        /// Event type (e.g. mission.started, feature.completed).
+        #[arg(long)]
+        r#type: Option<String>,
+        /// Event source (e.g. droid, hermes, git).
+        #[arg(long)]
+        source: Option<String>,
         #[arg(long)]
         channel: Option<String>,
         #[arg(long)]
-        message: String,
+        message: Option<String>,
     },
     /// Deliver a prompt into an existing hooked tmux-backed Codex/Claude session (including OMC/OMX wrappers).
     Deliver(DeliverArgs),
@@ -147,6 +158,26 @@ pub enum Commands {
         #[command(subcommand)]
         command: ReleaseCommands,
     },
+}
+
+#[derive(Debug, Clone, Subcommand)]
+pub enum DaemonCommands {
+    /// Start the hermip daemon.
+    Start {
+        /// Override the configured port.
+        #[arg(long)]
+        port: Option<u16>,
+    },
+    /// Stop the running hermip daemon.
+    Stop,
+    /// Restart the hermip daemon.
+    Restart {
+        /// Override the configured port on restart.
+        #[arg(long)]
+        port: Option<u16>,
+    },
+    /// Check daemon health/status.
+    Status,
 }
 
 #[derive(Debug, Clone, Args)]
@@ -642,6 +673,8 @@ pub enum HookProvider {
     Codex,
     #[value(name = "claude-code", alias = "claude")]
     ClaudeCode,
+    #[value(name = "hermes", alias = "hermes-agent")]
+    Hermes,
 }
 
 impl HookProvider {
@@ -649,6 +682,7 @@ impl HookProvider {
         match self {
             Self::Codex => "codex",
             Self::ClaudeCode => "claude-code",
+            Self::Hermes => "hermes",
         }
     }
 }
@@ -663,6 +697,8 @@ pub enum HookInstallScope {
 pub enum HooksCommands {
     /// Install provider-native hook forwarding for Codex and/or Claude Code.
     Install(HooksInstallArgs),
+    /// Uninstall provider-native hook forwarding.
+    Uninstall(HooksUninstallArgs),
 }
 
 #[derive(Debug, Clone, Args)]
@@ -684,6 +720,25 @@ pub struct HooksInstallArgs {
     pub force: bool,
 }
 
+#[derive(Debug, Clone, Args)]
+pub struct HooksUninstallArgs {
+    /// Uninstall all supported providers.
+    #[arg(long, default_value_t = false)]
+    pub all: bool,
+    /// Uninstall only the selected provider(s). Repeat to uninstall multiple.
+    #[arg(long, value_enum, action = ArgAction::Append)]
+    pub provider: Vec<HookProvider>,
+    /// Uninstall from the project root or the user's global provider config.
+    #[arg(long, value_enum, default_value_t = HookInstallScope::Project)]
+    pub scope: HookInstallScope,
+    /// Project root for project-scoped uninstall. Defaults to the current directory.
+    #[arg(long)]
+    pub root: Option<PathBuf>,
+    /// Also remove hermip-managed generated files (hook scripts, project metadata).
+    #[arg(long, default_value_t = false)]
+    pub clean: bool,
+}
+
 #[derive(Debug, Clone, Default, Subcommand)]
 pub enum ConfigCommand {
     /// Edit the five common setup presets interactively; advanced routes and monitors remain manual-edit territory.
@@ -693,6 +748,15 @@ pub enum ConfigCommand {
     Show,
     /// Print the active config file path.
     Path,
+    /// Set a configuration value (e.g. `hermip config set daemon.port 30999`).
+    Set {
+        /// Dot-separated config key (e.g. daemon.port, providers.discord.bot_token).
+        #[arg(long)]
+        key: String,
+        /// New value for the key.
+        #[arg(long)]
+        value: String,
+    },
     /// Verify all channel bindings in the config against live Discord server state.
     ///
     /// Walks routes, defaults, and monitors to collect every channel ID reference,
@@ -1370,15 +1434,18 @@ mod tests {
             panic!("expected hooks command");
         };
 
-        let HooksCommands::Install(args) = command;
-
-        assert_eq!(
-            args.provider,
-            vec![HookProvider::Codex, HookProvider::ClaudeCode]
-        );
-        assert_eq!(args.scope, HookInstallScope::Project);
-        assert_eq!(args.root, Some(PathBuf::from("/tmp/repo")));
-        assert!(!args.all);
+        match command {
+            HooksCommands::Install(args) => {
+                assert_eq!(
+                    args.provider,
+                    vec![HookProvider::Codex, HookProvider::ClaudeCode]
+                );
+                assert_eq!(args.scope, HookInstallScope::Project);
+                assert_eq!(args.root, Some(PathBuf::from("/tmp/repo")));
+                assert!(!args.all);
+            }
+            HooksCommands::Uninstall(_) => panic!("expected Install"),
+        }
     }
 
     #[test]
@@ -1389,10 +1456,13 @@ mod tests {
             panic!("expected hooks command");
         };
 
-        let HooksCommands::Install(args) = command;
-
-        assert!(args.provider.is_empty());
-        assert!(args.all);
+        match command {
+            HooksCommands::Install(args) => {
+                assert!(args.provider.is_empty());
+                assert!(args.all);
+            }
+            HooksCommands::Uninstall(_) => panic!("expected Install"),
+        }
     }
 
     #[test]
@@ -1412,11 +1482,14 @@ mod tests {
             panic!("expected hooks command");
         };
 
-        let HooksCommands::Install(args) = command;
-
-        assert_eq!(args.provider, vec![HookProvider::ClaudeCode]);
-        assert_eq!(args.scope, HookInstallScope::Global);
-        assert!(args.force);
+        match command {
+            HooksCommands::Install(args) => {
+                assert_eq!(args.provider, vec![HookProvider::ClaudeCode]);
+                assert_eq!(args.scope, HookInstallScope::Global);
+                assert!(args.force);
+            }
+            HooksCommands::Uninstall(_) => panic!("expected Install"),
+        }
     }
 
     #[test]

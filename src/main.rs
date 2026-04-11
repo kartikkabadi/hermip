@@ -31,9 +31,9 @@ use std::sync::Arc;
 use clap::Parser;
 
 use crate::cli::{
-    AgentCommands, Cli, Commands, ConfigCommand, CronCommands, ExplainArgs, GitCommands,
-    GithubCommands, HooksCommands, MemoryCommands, NativeCommands, PluginCommands, ReleaseCommands,
-    SetupArgs, TmuxCommands, UpdateCommands, VerifyBindingsArgs,
+    AgentCommands, Cli, Commands, ConfigCommand, CronCommands, DaemonCommands, ExplainArgs,
+    GitCommands, GithubCommands, HooksCommands, MemoryCommands, NativeCommands, PluginCommands,
+    ReleaseCommands, SetupArgs, TmuxCommands, UpdateCommands, VerifyBindingsArgs,
 };
 use crate::client::DaemonClient;
 use crate::config::{AppConfig, SetupEdits};
@@ -68,6 +68,7 @@ async fn real_main() -> Result<()> {
 
     match cli.command.unwrap_or(Commands::Start { port: None }) {
         Commands::Start { port } => daemon::run(config, port, cron_state_path).await,
+        Commands::Daemon { command } => run_daemon_command(command, config, cron_state_path).await,
         Commands::Status => {
             let client = DaemonClient::from_config(config.as_ref());
             let health = client.health().await?;
@@ -81,9 +82,21 @@ async fn real_main() -> Result<()> {
         }
         Commands::Explain(args) => run_explain(config.as_ref(), args),
         Commands::Setup(args) => run_setup(args, &config_path).await,
-        Commands::Send { channel, message } => {
+        Commands::Send {
+            r#type,
+            source,
+            channel,
+            message,
+        } => {
             let client = DaemonClient::from_config(config.as_ref());
-            send_incoming_event(&client, IncomingEvent::custom(channel, message)).await
+            let mut event = IncomingEvent::custom(channel, message.unwrap_or_default());
+            if let Some(t) = r#type {
+                event.kind = t;
+            }
+            if let Some(s) = source && let Some(payload) = event.payload.as_object_mut() {
+                payload.insert("source".into(), serde_json::json!(s));
+            }
+            send_incoming_event(&client, event).await
         }
         Commands::Git { command } => {
             let client = DaemonClient::from_config(config.as_ref());
@@ -294,6 +307,13 @@ async fn real_main() -> Result<()> {
                 println!("{}", config_path.display());
                 Ok(())
             }
+            ConfigCommand::Set { key, value } => {
+                let mut editable = AppConfig::load_or_default(&config_path)?;
+                editable.set_from_key_value(&key, &value)?;
+                editable.save(&config_path)?;
+                println!("Set {} = {} in {}", key, value, config_path.display());
+                Ok(())
+            }
             ConfigCommand::VerifyBindings(args) => run_verify_bindings(config, args).await,
         },
         Commands::Plugin { command } => match command {
@@ -324,6 +344,7 @@ async fn real_main() -> Result<()> {
         },
         Commands::Hooks { command } => match command {
             HooksCommands::Install(args) => hooks::install(args),
+            HooksCommands::Uninstall(args) => hooks::uninstall(args),
         },
         Commands::Release { command } => match command {
             ReleaseCommands::Preflight { version, repo } => release_preflight::run(repo, version),
@@ -469,6 +490,36 @@ async fn run_setup(args: SetupArgs, config_path: &std::path::Path) -> Result<()>
     editable.save(config_path)?;
     println!("Saved {}", config_path.display());
     Ok(())
+}
+
+async fn run_daemon_command(
+    command: DaemonCommands,
+    config: Arc<AppConfig>,
+    cron_state_path: std::path::PathBuf,
+) -> Result<()> {
+    match command {
+        DaemonCommands::Start { port } => daemon::run(config, port, cron_state_path).await,
+        DaemonCommands::Stop => {
+            let client = DaemonClient::from_config(config.as_ref());
+            client.shutdown().await?;
+            println!("Daemon stopped");
+            Ok(())
+        }
+        DaemonCommands::Restart { port } => {
+            let client = DaemonClient::from_config(config.as_ref());
+            match client.shutdown().await {
+                Ok(()) => println!("Daemon stopped"),
+                Err(e) => eprintln!("Warning: could not stop daemon: {e}"),
+            }
+            daemon::run(config, port, cron_state_path).await
+        }
+        DaemonCommands::Status => {
+            let client = DaemonClient::from_config(config.as_ref());
+            let health = client.health().await?;
+            println!("{}", serde_json::to_string_pretty(&health)?);
+            Ok(())
+        }
+    }
 }
 
 async fn run_verify_bindings(config: Arc<AppConfig>, args: VerifyBindingsArgs) -> Result<()> {
