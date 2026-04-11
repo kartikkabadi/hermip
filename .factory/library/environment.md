@@ -22,6 +22,17 @@ Several code paths still read `CLAWHIP_*` as primary names. Workers should NOT i
 - `HERMIP_CONFIG` — Override config file path (equivalent to --config flag)
 - `HERMIP_DAEMON_BASE_URL` — Override daemon base URL in config
 
+## Injectable Env-Var Reader Pattern
+
+Several config functions use an injectable `with<F>` pattern to enable unit testing without setting real environment variables:
+
+- `AppConfig::effective_token_with(get_env)` — Discord token resolution
+- `AppConfig::discord_token_source_with(get_env)` — Token source reporting
+- `AppConfig::apply_hermip_env_overrides_with(get_env)` — HERMIP_* env var overrides
+- `default_config_path_with(get_env, get_cwd, get_env_home)` — Config path resolution (including HERMIP_CONFIG)
+
+Each public method delegates to its `_with` variant, passing `|name| env::var(name).ok()` as the env reader. Tests pass mock closures instead, avoiding real env var mutation.
+
 ## External Dependencies
 
 - **Rust toolchain** — Stable channel, edition 2024 (rustc 1.94.1+)
