@@ -409,19 +409,43 @@ pub enum CronJobKind {
     CustomMessage { message: String },
 }
 
+/// Returns the default config path using real environment and filesystem.
+///
+/// Resolution order:
+/// 1. `HERMIP_CONFIG` env var (if set and non-empty)
+/// 2. `hermip.toml` in the current working directory (if it exists)
+/// 3. `~/.config/hermip/hermip.toml` (global fallback)
 pub fn default_config_path() -> PathBuf {
-    if let Ok(override_path) = env::var("HERMIP_CONFIG") {
+    default_config_path_with(
+        |name| env::var(name).ok(),
+        || env::current_dir().ok(),
+        |name| env::var(name).ok(),
+    )
+}
+
+/// Returns the default config path using injectable environment and
+/// filesystem readers, enabling unit testing without real env vars.
+fn default_config_path_with<F, G, H>(mut get_env: F, get_cwd: G, mut get_env_home: H) -> PathBuf
+where
+    F: FnMut(&str) -> Option<String>,
+    G: FnOnce() -> Option<PathBuf>,
+    H: FnMut(&str) -> Option<String>,
+{
+    // 1. HERMIP_CONFIG override takes highest precedence.
+    if let Some(override_path) = get_env("HERMIP_CONFIG")
+        && !override_path.trim().is_empty()
+    {
         return PathBuf::from(override_path);
     }
-    // 1. Check for hermip.toml in current working directory.
-    if let Ok(cwd) = env::current_dir() {
+    // 2. Check for hermip.toml in current working directory.
+    if let Some(cwd) = get_cwd() {
         let local = cwd.join("hermip.toml");
         if local.exists() {
             return local;
         }
     }
-    // 2. Fall back to ~/.config/hermip/hermip.toml (global).
-    let home = env::var("HOME").unwrap_or_else(|_| ".".to_string());
+    // 3. Fall back to ~/.config/hermip/hermip.toml (global).
+    let home = get_env_home("HOME").unwrap_or_else(|| ".".to_string());
     PathBuf::from(home)
         .join(".config")
         .join("hermip")
@@ -582,39 +606,50 @@ impl AppConfig {
     /// Apply HERMIP_* environment variable overrides.
     /// These take highest precedence over TOML values.
     fn apply_hermip_env_overrides(&mut self) {
+        self.apply_hermip_env_overrides_with(|name| env::var(name).ok());
+    }
+
+    /// Apply HERMIP_* environment variable overrides using an injectable
+    /// env-var reader. Uses the same pattern as `effective_token_with()` and
+    /// `discord_token_source_with()` to enable unit testing without setting
+    /// real environment variables.
+    fn apply_hermip_env_overrides_with<F>(&mut self, mut get_env: F)
+    where
+        F: FnMut(&str) -> Option<String>,
+    {
         // HERMIP_DAEMON_PORT overrides [daemon].port
-        if let Ok(port_str) = env::var("HERMIP_DAEMON_PORT")
+        if let Some(port_str) = get_env("HERMIP_DAEMON_PORT")
             && let Ok(port) = port_str.parse::<u16>()
         {
             self.daemon.port = port;
         }
         // HERMIP_DAEMON_BASE_URL overrides [daemon].base_url
-        if let Ok(url) = env::var("HERMIP_DAEMON_BASE_URL")
+        if let Some(url) = get_env("HERMIP_DAEMON_BASE_URL")
             && !url.trim().is_empty()
         {
             self.daemon.base_url = url.trim().to_string();
         }
         // HERMIP_DEFAULTS_CHANNEL overrides [defaults].channel
-        if let Ok(ch) = env::var("HERMIP_DEFAULTS_CHANNEL")
+        if let Some(ch) = get_env("HERMIP_DEFAULTS_CHANNEL")
             && !ch.trim().is_empty()
         {
             self.defaults.channel = Some(ch.trim().to_string());
         }
         // HERMIP_DEFAULTS_FORMAT overrides [defaults].format
-        if let Ok(fmt) = env::var("HERMIP_DEFAULTS_FORMAT")
+        if let Some(fmt) = get_env("HERMIP_DEFAULTS_FORMAT")
             && !fmt.trim().is_empty()
             && let Ok(format) = crate::events::MessageFormat::from_label(fmt.trim())
         {
             self.defaults.format = format;
         }
         // HERMIP_PROVIDERS_DISCORD_TOKEN overrides [providers.discord].token
-        if let Ok(token) = env::var("HERMIP_PROVIDERS_DISCORD_TOKEN")
+        if let Some(token) = get_env("HERMIP_PROVIDERS_DISCORD_TOKEN")
             && !token.trim().is_empty()
         {
             self.providers.discord.bot_token = Some(token.trim().to_string());
         }
         // HERMIP_DEFAULTS_CHANNEL_NAME overrides [defaults].channel_name
-        if let Ok(name) = env::var("HERMIP_DEFAULTS_CHANNEL_NAME")
+        if let Some(name) = get_env("HERMIP_DEFAULTS_CHANNEL_NAME")
             && !name.trim().is_empty()
         {
             self.defaults.channel_name = Some(name.trim().to_string());
@@ -2410,5 +2445,716 @@ default_channel = "legacy-default-channel"
         assert!(!AppConfig::is_secret_key("webhook"));
         assert!(!AppConfig::is_secret_key("slack_webhook"));
         assert!(!AppConfig::is_secret_key("bot_token"));
+    }
+
+    // ---------------------------------------------------------------------------
+    // VAL-CONFIG-006: HERMIP_* env var overrides (injectable _with pattern)
+    // ---------------------------------------------------------------------------
+
+    /// Helper: creates a minimal AppConfig with non-default TOML values so that
+    /// env-var overrides can be verified as taking highest precedence.
+    fn config_with_toml_values() -> AppConfig {
+        AppConfig {
+            daemon: DaemonConfig {
+                bind_host: "0.0.0.0".into(),
+                port: 25294,
+                base_url: "http://127.0.0.1:25294".into(),
+            },
+            defaults: DefaultsConfig {
+                channel: Some("toml-channel".into()),
+                channel_name: Some("toml-channel-name".into()),
+                format: MessageFormat::Compact,
+            },
+            providers: ProvidersConfig {
+                discord: DiscordConfig {
+                    bot_token: Some("toml-bot-token".into()),
+                    legacy_default_channel: None,
+                },
+                slack: SlackConfig::default(),
+            },
+            ..AppConfig::default()
+        }
+    }
+
+    // --- HERMIP_DAEMON_PORT ---
+
+    #[test]
+    fn hermip_daemon_port_overrides_toml_value() {
+        let mut config = config_with_toml_values();
+        assert_eq!(config.daemon.port, 25294);
+
+        config.apply_hermip_env_overrides_with(|name| {
+            (name == "HERMIP_DAEMON_PORT").then(|| "30999".to_string())
+        });
+
+        assert_eq!(config.daemon.port, 30999, "env var should override TOML");
+    }
+
+    #[test]
+    fn hermip_daemon_port_is_ignored_when_invalid() {
+        let mut config = config_with_toml_values();
+
+        config.apply_hermip_env_overrides_with(|name| {
+            (name == "HERMIP_DAEMON_PORT").then(|| "not-a-number".to_string())
+        });
+
+        assert_eq!(
+            config.daemon.port, 25294,
+            "invalid port should not override TOML"
+        );
+    }
+
+    #[test]
+    fn hermip_daemon_port_is_ignored_when_empty() {
+        let mut config = config_with_toml_values();
+
+        config.apply_hermip_env_overrides_with(|name| {
+            (name == "HERMIP_DAEMON_PORT").then(|| "".to_string())
+        });
+
+        assert_eq!(
+            config.daemon.port, 25294,
+            "empty port string should not override TOML"
+        );
+    }
+
+    #[test]
+    fn hermip_daemon_port_is_ignored_when_unset() {
+        let mut config = config_with_toml_values();
+
+        config.apply_hermip_env_overrides_with(|_| None);
+
+        assert_eq!(
+            config.daemon.port, 25294,
+            "unset env var should not override TOML"
+        );
+    }
+
+    #[test]
+    fn hermip_daemon_port_accepts_zero() {
+        let mut config = config_with_toml_values();
+
+        config.apply_hermip_env_overrides_with(|name| {
+            (name == "HERMIP_DAEMON_PORT").then(|| "0".to_string())
+        });
+
+        assert_eq!(config.daemon.port, 0, "port 0 is a valid u16 value");
+    }
+
+    #[test]
+    fn hermip_daemon_port_rejects_overflow() {
+        let mut config = config_with_toml_values();
+
+        config.apply_hermip_env_overrides_with(|name| {
+            (name == "HERMIP_DAEMON_PORT").then(|| "99999".to_string())
+        });
+
+        assert_eq!(
+            config.daemon.port, 25294,
+            "u16 overflow should not override TOML"
+        );
+    }
+
+    // --- HERMIP_DAEMON_BASE_URL ---
+
+    #[test]
+    fn hermip_daemon_base_url_overrides_toml_value() {
+        let mut config = config_with_toml_values();
+
+        config.apply_hermip_env_overrides_with(|name| {
+            (name == "HERMIP_DAEMON_BASE_URL").then(|| "http://custom:8080".to_string())
+        });
+
+        assert_eq!(
+            config.daemon.base_url, "http://custom:8080",
+            "env var should override TOML"
+        );
+    }
+
+    #[test]
+    fn hermip_daemon_base_url_is_ignored_when_empty() {
+        let mut config = config_with_toml_values();
+
+        config.apply_hermip_env_overrides_with(|name| {
+            (name == "HERMIP_DAEMON_BASE_URL").then(|| "".to_string())
+        });
+
+        assert_eq!(
+            config.daemon.base_url, "http://127.0.0.1:25294",
+            "empty value should not override TOML"
+        );
+    }
+
+    #[test]
+    fn hermip_daemon_base_url_is_ignored_when_whitespace_only() {
+        let mut config = config_with_toml_values();
+
+        config.apply_hermip_env_overrides_with(|name| {
+            (name == "HERMIP_DAEMON_BASE_URL").then(|| "   ".to_string())
+        });
+
+        assert_eq!(
+            config.daemon.base_url, "http://127.0.0.1:25294",
+            "whitespace-only value should not override TOML"
+        );
+    }
+
+    #[test]
+    fn hermip_daemon_base_url_trims_whitespace() {
+        let mut config = config_with_toml_values();
+
+        config.apply_hermip_env_overrides_with(|name| {
+            (name == "HERMIP_DAEMON_BASE_URL").then(|| "  http://custom:8080  ".to_string())
+        });
+
+        assert_eq!(
+            config.daemon.base_url, "http://custom:8080",
+            "value should be trimmed"
+        );
+    }
+
+    // --- HERMIP_DEFAULTS_CHANNEL ---
+
+    #[test]
+    fn hermip_defaults_channel_overrides_toml_value() {
+        let mut config = config_with_toml_values();
+
+        config.apply_hermip_env_overrides_with(|name| {
+            (name == "HERMIP_DEFAULTS_CHANNEL").then(|| "env-channel".to_string())
+        });
+
+        assert_eq!(
+            config.defaults.channel.as_deref(),
+            Some("env-channel"),
+            "env var should override TOML"
+        );
+    }
+
+    #[test]
+    fn hermip_defaults_channel_is_ignored_when_empty() {
+        let mut config = config_with_toml_values();
+
+        config.apply_hermip_env_overrides_with(|name| {
+            (name == "HERMIP_DEFAULTS_CHANNEL").then(|| "".to_string())
+        });
+
+        assert_eq!(
+            config.defaults.channel.as_deref(),
+            Some("toml-channel"),
+            "empty value should not override TOML"
+        );
+    }
+
+    #[test]
+    fn hermip_defaults_channel_is_ignored_when_whitespace_only() {
+        let mut config = config_with_toml_values();
+
+        config.apply_hermip_env_overrides_with(|name| {
+            (name == "HERMIP_DEFAULTS_CHANNEL").then(|| "   ".to_string())
+        });
+
+        assert_eq!(
+            config.defaults.channel.as_deref(),
+            Some("toml-channel"),
+            "whitespace-only value should not override TOML"
+        );
+    }
+
+    #[test]
+    fn hermip_defaults_channel_trims_whitespace() {
+        let mut config = config_with_toml_values();
+
+        config.apply_hermip_env_overrides_with(|name| {
+            (name == "HERMIP_DEFAULTS_CHANNEL").then(|| "  env-channel  ".to_string())
+        });
+
+        assert_eq!(
+            config.defaults.channel.as_deref(),
+            Some("env-channel"),
+            "value should be trimmed"
+        );
+    }
+
+    #[test]
+    fn hermip_defaults_channel_sets_value_when_toml_is_none() {
+        let mut config = AppConfig::default();
+        assert!(config.defaults.channel.is_none());
+
+        config.apply_hermip_env_overrides_with(|name| {
+            (name == "HERMIP_DEFAULTS_CHANNEL").then(|| "123456".to_string())
+        });
+
+        assert_eq!(
+            config.defaults.channel.as_deref(),
+            Some("123456"),
+            "env var should set value even when TOML has none"
+        );
+    }
+
+    // --- HERMIP_DEFAULTS_FORMAT ---
+
+    #[test]
+    fn hermip_defaults_format_overrides_toml_value() {
+        let mut config = config_with_toml_values();
+        assert_eq!(config.defaults.format, MessageFormat::Compact);
+
+        config.apply_hermip_env_overrides_with(|name| {
+            (name == "HERMIP_DEFAULTS_FORMAT").then(|| "alert".to_string())
+        });
+
+        assert_eq!(
+            config.defaults.format,
+            MessageFormat::Alert,
+            "env var should override TOML"
+        );
+    }
+
+    #[test]
+    fn hermip_defaults_format_accepts_all_valid_values() {
+        let formats = [
+            ("compact", MessageFormat::Compact),
+            ("alert", MessageFormat::Alert),
+            ("inline", MessageFormat::Inline),
+            ("raw", MessageFormat::Raw),
+        ];
+
+        for (label, expected) in formats {
+            let mut config = config_with_toml_values();
+            let label_owned = label.to_string();
+            config.apply_hermip_env_overrides_with(move |name| {
+                (name == "HERMIP_DEFAULTS_FORMAT").then(|| label_owned.clone())
+            });
+            assert_eq!(
+                config.defaults.format, expected,
+                "format '{label}' should be accepted"
+            );
+        }
+    }
+
+    #[test]
+    fn hermip_defaults_format_is_ignored_when_invalid() {
+        let mut config = config_with_toml_values();
+
+        config.apply_hermip_env_overrides_with(|name| {
+            (name == "HERMIP_DEFAULTS_FORMAT").then(|| "invalid-format".to_string())
+        });
+
+        assert_eq!(
+            config.defaults.format,
+            MessageFormat::Compact,
+            "invalid format should not override TOML"
+        );
+    }
+
+    #[test]
+    fn hermip_defaults_format_is_ignored_when_empty() {
+        let mut config = config_with_toml_values();
+
+        config.apply_hermip_env_overrides_with(|name| {
+            (name == "HERMIP_DEFAULTS_FORMAT").then(|| "".to_string())
+        });
+
+        assert_eq!(
+            config.defaults.format,
+            MessageFormat::Compact,
+            "empty value should not override TOML"
+        );
+    }
+
+    #[test]
+    fn hermip_defaults_format_trims_whitespace() {
+        let mut config = config_with_toml_values();
+
+        config.apply_hermip_env_overrides_with(|name| {
+            (name == "HERMIP_DEFAULTS_FORMAT").then(|| "  alert  ".to_string())
+        });
+
+        assert_eq!(
+            config.defaults.format,
+            MessageFormat::Alert,
+            "value should be trimmed before parsing"
+        );
+    }
+
+    // --- HERMIP_PROVIDERS_DISCORD_TOKEN ---
+
+    #[test]
+    fn hermip_providers_discord_token_overrides_toml_value() {
+        let mut config = config_with_toml_values();
+
+        config.apply_hermip_env_overrides_with(|name| {
+            (name == "HERMIP_PROVIDERS_DISCORD_TOKEN").then(|| "env-token".to_string())
+        });
+
+        assert_eq!(
+            config.providers.discord.bot_token.as_deref(),
+            Some("env-token"),
+            "env var should override TOML"
+        );
+    }
+
+    #[test]
+    fn hermip_providers_discord_token_is_ignored_when_empty() {
+        let mut config = config_with_toml_values();
+
+        config.apply_hermip_env_overrides_with(|name| {
+            (name == "HERMIP_PROVIDERS_DISCORD_TOKEN").then(|| "".to_string())
+        });
+
+        assert_eq!(
+            config.providers.discord.bot_token.as_deref(),
+            Some("toml-bot-token"),
+            "empty value should not override TOML"
+        );
+    }
+
+    #[test]
+    fn hermip_providers_discord_token_is_ignored_when_whitespace_only() {
+        let mut config = config_with_toml_values();
+
+        config.apply_hermip_env_overrides_with(|name| {
+            (name == "HERMIP_PROVIDERS_DISCORD_TOKEN").then(|| "   ".to_string())
+        });
+
+        assert_eq!(
+            config.providers.discord.bot_token.as_deref(),
+            Some("toml-bot-token"),
+            "whitespace-only value should not override TOML"
+        );
+    }
+
+    #[test]
+    fn hermip_providers_discord_token_trims_whitespace() {
+        let mut config = config_with_toml_values();
+
+        config.apply_hermip_env_overrides_with(|name| {
+            (name == "HERMIP_PROVIDERS_DISCORD_TOKEN").then(|| "  env-token  ".to_string())
+        });
+
+        assert_eq!(
+            config.providers.discord.bot_token.as_deref(),
+            Some("env-token"),
+            "value should be trimmed"
+        );
+    }
+
+    #[test]
+    fn hermip_providers_discord_token_sets_value_when_toml_is_none() {
+        let mut config = AppConfig::default();
+        assert!(config.providers.discord.bot_token.is_none());
+
+        config.apply_hermip_env_overrides_with(|name| {
+            (name == "HERMIP_PROVIDERS_DISCORD_TOKEN").then(|| "bot-token-from-env".to_string())
+        });
+
+        assert_eq!(
+            config.providers.discord.bot_token.as_deref(),
+            Some("bot-token-from-env"),
+            "env var should set value even when TOML has none"
+        );
+    }
+
+    // --- HERMIP_DEFAULTS_CHANNEL_NAME ---
+
+    #[test]
+    fn hermip_defaults_channel_name_overrides_toml_value() {
+        let mut config = config_with_toml_values();
+
+        config.apply_hermip_env_overrides_with(|name| {
+            (name == "HERMIP_DEFAULTS_CHANNEL_NAME").then(|| "env-channel-name".to_string())
+        });
+
+        assert_eq!(
+            config.defaults.channel_name.as_deref(),
+            Some("env-channel-name"),
+            "env var should override TOML"
+        );
+    }
+
+    #[test]
+    fn hermip_defaults_channel_name_is_ignored_when_empty() {
+        let mut config = config_with_toml_values();
+
+        config.apply_hermip_env_overrides_with(|name| {
+            (name == "HERMIP_DEFAULTS_CHANNEL_NAME").then(|| "".to_string())
+        });
+
+        assert_eq!(
+            config.defaults.channel_name.as_deref(),
+            Some("toml-channel-name"),
+            "empty value should not override TOML"
+        );
+    }
+
+    #[test]
+    fn hermip_defaults_channel_name_is_ignored_when_whitespace_only() {
+        let mut config = config_with_toml_values();
+
+        config.apply_hermip_env_overrides_with(|name| {
+            (name == "HERMIP_DEFAULTS_CHANNEL_NAME").then(|| "   ".to_string())
+        });
+
+        assert_eq!(
+            config.defaults.channel_name.as_deref(),
+            Some("toml-channel-name"),
+            "whitespace-only value should not override TOML"
+        );
+    }
+
+    #[test]
+    fn hermip_defaults_channel_name_trims_whitespace() {
+        let mut config = config_with_toml_values();
+
+        config.apply_hermip_env_overrides_with(|name| {
+            (name == "HERMIP_DEFAULTS_CHANNEL_NAME").then(|| "  env-channel-name  ".to_string())
+        });
+
+        assert_eq!(
+            config.defaults.channel_name.as_deref(),
+            Some("env-channel-name"),
+            "value should be trimmed"
+        );
+    }
+
+    #[test]
+    fn hermip_defaults_channel_name_sets_value_when_toml_is_none() {
+        let mut config = AppConfig::default();
+        assert!(config.defaults.channel_name.is_none());
+
+        config.apply_hermip_env_overrides_with(|name| {
+            (name == "HERMIP_DEFAULTS_CHANNEL_NAME").then(|| "general".to_string())
+        });
+
+        assert_eq!(
+            config.defaults.channel_name.as_deref(),
+            Some("general"),
+            "env var should set value even when TOML has none"
+        );
+    }
+
+    // --- HERMIP_CONFIG (default_config_path_with) ---
+
+    #[test]
+    fn hermip_config_env_var_overrides_default_path() {
+        let path = default_config_path_with(
+            |name| (name == "HERMIP_CONFIG").then(|| "/custom/hermip.toml".to_string()),
+            || None,
+            |_| None,
+        );
+
+        assert_eq!(
+            path,
+            PathBuf::from("/custom/hermip.toml"),
+            "HERMIP_CONFIG should override default path"
+        );
+    }
+
+    #[test]
+    fn hermip_config_env_var_trims_whitespace() {
+        let path = default_config_path_with(
+            |name| (name == "HERMIP_CONFIG").then(|| "  /custom/hermip.toml  ".to_string()),
+            || None,
+            |_| None,
+        );
+
+        assert_eq!(
+            path,
+            PathBuf::from("  /custom/hermip.toml  "),
+            "HERMIP_CONFIG value is used as-is (caller trims if needed)"
+        );
+    }
+
+    #[test]
+    fn hermip_config_empty_value_falls_through_to_cwd() {
+        let dir = tempfile::tempdir().unwrap();
+        let local = dir.path().join("hermip.toml");
+        fs::write(&local, "[daemon]\nport = 1\n").unwrap();
+
+        let path = default_config_path_with(
+            |name| (name == "HERMIP_CONFIG").then(|| "".to_string()),
+            || Some(dir.path().to_path_buf()),
+            |_| None,
+        );
+
+        assert_eq!(
+            path, local,
+            "empty HERMIP_CONFIG should fall through to CWD"
+        );
+    }
+
+    #[test]
+    fn hermip_config_unset_falls_through_to_global() {
+        let path = default_config_path_with(
+            |_| None,
+            || None,
+            |name| (name == "HOME").then(|| "/home/testuser".to_string()),
+        );
+
+        assert_eq!(
+            path,
+            PathBuf::from("/home/testuser/.config/hermip/hermip.toml"),
+            "unset HERMIP_CONFIG should fall through to global path"
+        );
+    }
+
+    #[test]
+    fn hermip_config_unset_cwd_local_file_takes_precedence_over_global() {
+        let dir = tempfile::tempdir().unwrap();
+        let local = dir.path().join("hermip.toml");
+        fs::write(&local, "[daemon]\nport = 1\n").unwrap();
+
+        let path = default_config_path_with(
+            |_| None,
+            || Some(dir.path().to_path_buf()),
+            |name| (name == "HOME").then(|| "/home/testuser".to_string()),
+        );
+
+        assert_eq!(
+            path, local,
+            "local hermip.toml should take precedence over global"
+        );
+    }
+
+    // --- Multiple overrides simultaneously ---
+
+    #[test]
+    fn multiple_hermip_env_overrides_all_take_effect() {
+        let mut config = config_with_toml_values();
+
+        config.apply_hermip_env_overrides_with(|name| match name {
+            "HERMIP_DAEMON_PORT" => Some("30999".to_string()),
+            "HERMIP_DAEMON_BASE_URL" => Some("http://custom:30999".to_string()),
+            "HERMIP_DEFAULTS_CHANNEL" => Some("env-channel".to_string()),
+            "HERMIP_DEFAULTS_FORMAT" => Some("raw".to_string()),
+            "HERMIP_PROVIDERS_DISCORD_TOKEN" => Some("env-token".to_string()),
+            "HERMIP_DEFAULTS_CHANNEL_NAME" => Some("env-channel-name".to_string()),
+            _ => None,
+        });
+
+        assert_eq!(config.daemon.port, 30999);
+        assert_eq!(config.daemon.base_url, "http://custom:30999");
+        assert_eq!(config.defaults.channel.as_deref(), Some("env-channel"));
+        assert_eq!(config.defaults.format, MessageFormat::Raw);
+        assert_eq!(
+            config.providers.discord.bot_token.as_deref(),
+            Some("env-token")
+        );
+        assert_eq!(
+            config.defaults.channel_name.as_deref(),
+            Some("env-channel-name")
+        );
+    }
+
+    #[test]
+    fn no_hermip_env_overrides_preserves_toml_values() {
+        let mut config = config_with_toml_values();
+
+        config.apply_hermip_env_overrides_with(|_| None);
+
+        assert_eq!(config.daemon.port, 25294);
+        assert_eq!(config.daemon.base_url, "http://127.0.0.1:25294");
+        assert_eq!(config.defaults.channel.as_deref(), Some("toml-channel"));
+        assert_eq!(config.defaults.format, MessageFormat::Compact);
+        assert_eq!(
+            config.providers.discord.bot_token.as_deref(),
+            Some("toml-bot-token")
+        );
+        assert_eq!(
+            config.defaults.channel_name.as_deref(),
+            Some("toml-channel-name")
+        );
+    }
+
+    #[test]
+    fn partial_hermip_env_overrides_only_affect_specified_fields() {
+        let mut config = config_with_toml_values();
+
+        // Only override port and format, leave others from TOML.
+        config.apply_hermip_env_overrides_with(|name| match name {
+            "HERMIP_DAEMON_PORT" => Some("40999".to_string()),
+            "HERMIP_DEFAULTS_FORMAT" => Some("alert".to_string()),
+            _ => None,
+        });
+
+        assert_eq!(config.daemon.port, 40999, "port should be overridden");
+        assert_eq!(
+            config.daemon.base_url, "http://127.0.0.1:25294",
+            "base_url should remain from TOML"
+        );
+        assert_eq!(
+            config.defaults.channel.as_deref(),
+            Some("toml-channel"),
+            "channel should remain from TOML"
+        );
+        assert_eq!(
+            config.defaults.format,
+            MessageFormat::Alert,
+            "format should be overridden"
+        );
+        assert_eq!(
+            config.providers.discord.bot_token.as_deref(),
+            Some("toml-bot-token"),
+            "bot_token should remain from TOML"
+        );
+        assert_eq!(
+            config.defaults.channel_name.as_deref(),
+            Some("toml-channel-name"),
+            "channel_name should remain from TOML"
+        );
+    }
+
+    // --- Env vars have highest precedence (override even after TOML merge) ---
+
+    #[test]
+    fn hermip_env_overrides_have_highest_precedence_after_full_load() {
+        // Simulate a full config load path: parse TOML → merge legacy → normalize → apply env overrides
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        fs::write(
+            &path,
+            r#"[daemon]
+port = 25294
+base_url = "http://127.0.0.1:25294"
+
+[defaults]
+channel = "toml-channel"
+format = "compact"
+
+[providers.discord]
+token = "toml-bot-token"
+"#,
+        )
+        .unwrap();
+
+        let mut config = AppConfig::load_or_default(&path).unwrap();
+
+        // Now apply env overrides using the _with pattern
+        config.apply_hermip_env_overrides_with(|name| match name {
+            "HERMIP_DAEMON_PORT" => Some("30999".to_string()),
+            "HERMIP_DEFAULTS_CHANNEL" => Some("env-channel".to_string()),
+            "HERMIP_DEFAULTS_FORMAT" => Some("raw".to_string()),
+            "HERMIP_PROVIDERS_DISCORD_TOKEN" => Some("env-token".to_string()),
+            _ => None,
+        });
+
+        assert_eq!(
+            config.daemon.port, 30999,
+            "env should override loaded TOML port"
+        );
+        assert_eq!(
+            config.defaults.channel.as_deref(),
+            Some("env-channel"),
+            "env should override loaded TOML channel"
+        );
+        assert_eq!(
+            config.defaults.format,
+            MessageFormat::Raw,
+            "env should override loaded TOML format"
+        );
+        assert_eq!(
+            config.providers.discord.bot_token.as_deref(),
+            Some("env-token"),
+            "env should override loaded TOML token"
+        );
     }
 }
