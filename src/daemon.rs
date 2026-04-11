@@ -224,9 +224,26 @@ fn health_payload(config: &AppConfig, port: u16, registered_tmux_sessions: usize
 
 async fn post_event(
     State(state): State<AppState>,
+    headers: HeaderMap,
     Json(event): Json<IncomingEvent>,
 ) -> impl IntoResponse {
+    // Validate Content-Type is application/json
+    if !is_json_content_type(&headers) {
+        return (
+            StatusCode::UNSUPPORTED_MEDIA_TYPE,
+            Json(json!({"ok": false, "error": "Content-Type must be application/json"})),
+        )
+            .into_response();
+    }
     accept_event(&state, normalize_event(event)).await
+}
+
+fn is_json_content_type(headers: &HeaderMap) -> bool {
+    headers
+        .get("content-type")
+        .and_then(|v| v.to_str().ok())
+        .map(|ct| ct.contains("application/json"))
+        .unwrap_or(false)
 }
 
 async fn post_native_hook(
@@ -651,7 +668,11 @@ mod tests {
             None,
         );
 
-        let response = post_event(State(state), Json(event)).await.into_response();
+        let mut headers = HeaderMap::new();
+        headers.insert("content-type", "application/json".parse().unwrap());
+        let response = post_event(State(state), headers, Json(event))
+            .await
+            .into_response();
         assert_eq!(response.status(), StatusCode::ACCEPTED);
 
         let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
@@ -917,5 +938,73 @@ mod tests {
         let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
         let json: Value = serde_json::from_slice(&body).unwrap();
         assert_eq!(json["ok"], Value::Bool(false));
+    }
+
+    #[tokio::test]
+    async fn post_event_rejects_text_plain_content_type() {
+        let (tx, _rx) = mpsc::channel(1);
+        let state = AppState {
+            config: Arc::new(AppConfig::default()),
+            port: 25294,
+            tx,
+            tmux_registry: Arc::new(RwLock::new(HashMap::new())),
+            pending_update: update::new_shared_pending_update(),
+        };
+        let mut headers = HeaderMap::new();
+        headers.insert("content-type", "text/plain".parse().unwrap());
+        let event = IncomingEvent::agent_started(
+            "worker-1".into(),
+            Some("sess-123".into()),
+            Some("my-repo".into()),
+            None,
+            Some("booted".into()),
+            None,
+            None,
+        );
+
+        let response = post_event(State(state), headers, Json(event))
+            .await
+            .into_response();
+        assert_eq!(response.status(), StatusCode::UNSUPPORTED_MEDIA_TYPE);
+
+        let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let json: Value = serde_json::from_slice(&body).unwrap();
+        assert!(
+            json["error"]
+                .as_str()
+                .unwrap()
+                .contains("Content-Type must be application/json")
+        );
+    }
+
+    #[tokio::test]
+    async fn post_event_accepts_application_json_content_type() {
+        let (tx, mut rx) = mpsc::channel(1);
+        let state = AppState {
+            config: Arc::new(AppConfig::default()),
+            port: 25294,
+            tx,
+            tmux_registry: Arc::new(RwLock::new(HashMap::new())),
+            pending_update: update::new_shared_pending_update(),
+        };
+        let mut headers = HeaderMap::new();
+        headers.insert("content-type", "application/json".parse().unwrap());
+        let event = IncomingEvent::agent_started(
+            "worker-1".into(),
+            Some("sess-123".into()),
+            Some("my-repo".into()),
+            None,
+            Some("booted".into()),
+            None,
+            None,
+        );
+
+        let response = post_event(State(state), headers, Json(event))
+            .await
+            .into_response();
+        assert_eq!(response.status(), StatusCode::ACCEPTED);
+
+        let queued = rx.recv().await.unwrap();
+        assert_eq!(queued.kind, "agent.started");
     }
 }
