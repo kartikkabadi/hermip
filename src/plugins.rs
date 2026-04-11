@@ -238,19 +238,16 @@ bridge = "bridge.sh"
 
     #[test]
     fn installs_bundled_plugins_into_destination() {
+        // After the hermip rebrand, no bundled plugins are distributed with the binary.
+        // When the bundled plugins directory is empty, install_bundled_plugins should
+        // succeed without copying anything.
         let tempdir = tempfile::tempdir().expect("tempdir");
         let destination = tempdir.path().join("installed-plugins");
 
         install_bundled_plugins(&destination).expect("install bundled plugins");
 
-        assert!(destination.join("codex").join("plugin.toml").is_file());
-        assert!(destination.join("codex").join("bridge.sh").is_file());
-        assert!(
-            destination
-                .join("claude-code")
-                .join("plugin.toml")
-                .is_file()
-        );
-        assert!(destination.join("claude-code").join("bridge.sh").is_file());
+        // No plugin directories should be created since plugins/ is empty
+        assert!(!destination.join("codex").exists());
+        assert!(!destination.join("claude-code").exists());
     }
 }

@@ -960,7 +960,7 @@ mod tests {
             payload: json!({
                 "tool": "codex",
                 "session_name": "issue-180",
-                "repo_name": "clawhip",
+                "repo_name": "hermip",
                 "tmux_session": "issue-180",
                 "tmux_window": "2",
                 "tmux_pane": "%11",
@@ -979,11 +979,11 @@ mod tests {
 
         assert_eq!(
             compact,
-            "codex issue-180 started (repo=clawhip, tmux=issue-180:2:%11, pane_tty=/dev/pts/42, clients=0, detached)"
+            "codex issue-180 started (repo=hermip, tmux=issue-180:2:%11, pane_tty=/dev/pts/42, clients=0, detached)"
         );
         assert_eq!(
             inline,
-            "[codex issue-180] started · clawhip · tmux issue-180:2:%11 · /dev/pts/42 · 0 clients · detached"
+            "[codex issue-180] started · hermip · tmux issue-180:2:%11 · /dev/pts/42 · 0 clients · detached"
         );
     }
 
@@ -991,11 +991,11 @@ mod tests {
     fn renders_release_published_compact() {
         let event = IncomingEvent::github_release(
             "published",
-            "Yeachan-Heo/clawhip".into(),
+            "Yeachan-Heo/hermip".into(),
             "v0.6.0".into(),
-            "clawhip 0.6.0".into(),
+            "hermip 0.6.0".into(),
             false,
-            "https://github.com/Yeachan-Heo/clawhip/releases/tag/v0.6.0".into(),
+            "https://github.com/Yeachan-Heo/hermip/releases/tag/v0.6.0".into(),
             Some("Yeachan-Heo".into()),
             None,
         );
@@ -1004,20 +1004,20 @@ mod tests {
             .render(&event, &MessageFormat::Compact)
             .unwrap();
         assert!(rendered.contains("release published"));
-        assert!(rendered.contains("Yeachan-Heo/clawhip"));
+        assert!(rendered.contains("Yeachan-Heo/hermip"));
         assert!(rendered.contains("v0.6.0"));
-        assert!(rendered.contains("clawhip 0.6.0"));
+        assert!(rendered.contains("hermip 0.6.0"));
     }
 
     #[test]
     fn renders_release_prerelease_compact_with_flag() {
         let event = IncomingEvent::github_release(
             "prereleased",
-            "Yeachan-Heo/clawhip".into(),
+            "Yeachan-Heo/hermip".into(),
             "v0.6.0-rc.1".into(),
             "v0.6.0-rc.1".into(),
             true,
-            "https://github.com/Yeachan-Heo/clawhip/releases/tag/v0.6.0-rc.1".into(),
+            "https://github.com/Yeachan-Heo/hermip/releases/tag/v0.6.0-rc.1".into(),
             None,
             None,
         );
@@ -1033,11 +1033,11 @@ mod tests {
     fn renders_release_inline_format() {
         let event = IncomingEvent::github_release(
             "published",
-            "Yeachan-Heo/clawhip".into(),
+            "Yeachan-Heo/hermip".into(),
             "v0.6.0".into(),
-            "clawhip 0.6.0".into(),
+            "hermip 0.6.0".into(),
             false,
-            "https://github.com/Yeachan-Heo/clawhip/releases/tag/v0.6.0".into(),
+            "https://github.com/Yeachan-Heo/hermip/releases/tag/v0.6.0".into(),
             None,
             None,
         );
@@ -1045,18 +1045,18 @@ mod tests {
         let rendered = DefaultRenderer
             .render(&event, &MessageFormat::Inline)
             .unwrap();
-        assert_eq!(rendered, "[release] Yeachan-Heo/clawhip v0.6.0");
+        assert_eq!(rendered, "[release] Yeachan-Heo/hermip v0.6.0");
     }
 
     #[test]
     fn renders_release_alert_format() {
         let event = IncomingEvent::github_release(
             "published",
-            "Yeachan-Heo/clawhip".into(),
+            "Yeachan-Heo/hermip".into(),
             "v0.6.0".into(),
-            "clawhip 0.6.0".into(),
+            "hermip 0.6.0".into(),
             false,
-            "https://github.com/Yeachan-Heo/clawhip/releases/tag/v0.6.0".into(),
+            "https://github.com/Yeachan-Heo/hermip/releases/tag/v0.6.0".into(),
             None,
             None,
         );

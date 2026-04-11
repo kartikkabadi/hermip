@@ -8,7 +8,7 @@ use anyhow::{Context, anyhow};
 
 use crate::{Result, plugins};
 
-const GITHUB_REPO: &str = "Yeachan-Heo/clawhip";
+const GITHUB_REPO: &str = "FactoryDroid/hermip";
 const SKIP_STAR_PROMPT_ENV: &str = "CLAWHIP_SKIP_STAR_PROMPT";
 
 pub fn install(systemd: bool, skip_star_prompt: bool) -> Result<()> {
@@ -23,7 +23,7 @@ pub fn install(systemd: bool, skip_star_prompt: bool) -> Result<()> {
         install_systemd(&repo_root)?;
     }
     maybe_prompt_to_star_repo(skip_star_prompt)?;
-    println!("clawhip install complete");
+    println!("hermip install complete");
     Ok(())
 }
 
@@ -41,7 +41,7 @@ pub fn update_from_repo(explicit_root: Option<&str>, restart: bool) -> Result<()
             let root = PathBuf::from(path);
             if !root.join("Cargo.toml").exists() || !root.join("src").exists() {
                 return Err(anyhow!(
-                    "configured repo_root '{}' does not contain a clawhip checkout",
+                    "configured repo_root '{}' does not contain a hermip checkout",
                     root.display()
                 )
                 .into());
@@ -69,7 +69,7 @@ fn update_repo(repo_root: &Path, restart: bool) -> Result<()> {
     if restart {
         restart_systemd_if_present()?;
     }
-    println!("clawhip update complete");
+    println!("hermip update complete");
     Ok(())
 }
 
@@ -96,14 +96,14 @@ fn find_repo_root() -> Result<PathBuf> {
         }
     }
     Err(anyhow!(
-        "could not locate clawhip repo root; run from the git clone or ensure cargo is available"
+        "could not locate hermip repo root; run from the git clone or ensure cargo is available"
     )
     .into())
 }
 
 pub fn uninstall(remove_systemd: bool, remove_config: bool) -> Result<()> {
     stop_systemd_if_present()?;
-    let binary_path = cargo_bin_dir().join("clawhip");
+    let binary_path = cargo_bin_dir().join("hermip");
     if binary_path.exists() {
         fs::remove_file(&binary_path)?;
         println!("Removed {}", binary_path.display());
@@ -118,7 +118,7 @@ pub fn uninstall(remove_systemd: bool, remove_config: bool) -> Result<()> {
             println!("Removed {}", config_dir.display());
         }
     }
-    println!("clawhip uninstall complete");
+    println!("hermip uninstall complete");
     Ok(())
 }
 
@@ -127,7 +127,7 @@ fn current_repo_root() -> Result<PathBuf> {
     if dir.join("Cargo.toml").exists() && dir.join("src").exists() {
         Ok(dir)
     } else {
-        Err(anyhow!("run this command from the clawhip git clone root").into())
+        Err(anyhow!("run this command from the hermip git clone root").into())
     }
 }
 
@@ -185,7 +185,7 @@ where
     if star_prompt_disabled(skip_star_prompt, env_skip_star_prompt) {
         writeln!(
             output,
-            "[clawhip] skipping GitHub star prompt (--skip-star-prompt or {SKIP_STAR_PROMPT_ENV})"
+            "[hermip] skipping GitHub star prompt (--skip-star-prompt or {SKIP_STAR_PROMPT_ENV})"
         )?;
         return Ok(());
     }
@@ -196,11 +196,11 @@ where
 
     writeln!(
         output,
-        "[clawhip] optional: star {GITHUB_REPO} on GitHub to support the project"
+        "[hermip] optional: star {GITHUB_REPO} on GitHub to support the project"
     )?;
     write!(
         output,
-        "[clawhip] Would you like to star {GITHUB_REPO} on GitHub with gh? [y/N]: "
+        "[hermip] Would you like to star {GITHUB_REPO} on GitHub with gh? [y/N]: "
     )?;
     output.flush()?;
 
@@ -212,16 +212,16 @@ where
     match response.trim() {
         "y" | "Y" | "yes" | "Yes" | "YES" => {
             if gh_star_repo_succeeds_with(&mut gh_command_succeeds) {
-                writeln!(output, "[clawhip] thanks for starring {GITHUB_REPO}")?;
+                writeln!(output, "[hermip] thanks for starring {GITHUB_REPO}")?;
             } else {
                 writeln!(
                     output,
-                    "[clawhip] unable to star {GITHUB_REPO} with gh; continuing without it"
+                    "[hermip] unable to star {GITHUB_REPO} with gh; continuing without it"
                 )?;
             }
         }
         _ => {
-            writeln!(output, "[clawhip] skipping GitHub star step")?;
+            writeln!(output, "[hermip] skipping GitHub star step")?;
         }
     }
 
@@ -254,8 +254,8 @@ fn gh_command_succeeds(args: &[&str]) -> bool {
 }
 
 fn install_systemd(repo_root: &Path) -> Result<()> {
-    let unit_src = repo_root.join("deploy").join("clawhip.service");
-    let unit_dest = PathBuf::from("/etc/systemd/system/clawhip.service");
+    let unit_src = repo_root.join("deploy").join("hermip.service");
+    let unit_dest = PathBuf::from("/etc/systemd/system/hermip.service");
     run(Command::new("sudo")
         .arg("cp")
         .arg(&unit_src)
@@ -265,18 +265,18 @@ fn install_systemd(repo_root: &Path) -> Result<()> {
         .arg("systemctl")
         .arg("enable")
         .arg("--now")
-        .arg("clawhip"))?;
+        .arg("hermip"))?;
     Ok(())
 }
 
 fn uninstall_systemd_if_present() -> Result<()> {
-    let unit_dest = PathBuf::from("/etc/systemd/system/clawhip.service");
+    let unit_dest = PathBuf::from("/etc/systemd/system/hermip.service");
     if unit_dest.exists() {
         let _ = run(Command::new("sudo")
             .arg("systemctl")
             .arg("disable")
             .arg("--now")
-            .arg("clawhip"));
+            .arg("hermip"));
         let _ = run(Command::new("sudo").arg("rm").arg("-f").arg(&unit_dest));
         let _ = run(Command::new("sudo").arg("systemctl").arg("daemon-reload"));
     }
@@ -284,23 +284,23 @@ fn uninstall_systemd_if_present() -> Result<()> {
 }
 
 fn restart_systemd_if_present() -> Result<()> {
-    let unit_dest = PathBuf::from("/etc/systemd/system/clawhip.service");
+    let unit_dest = PathBuf::from("/etc/systemd/system/hermip.service");
     if unit_dest.exists() {
         let _ = run(Command::new("sudo")
             .arg("systemctl")
             .arg("restart")
-            .arg("clawhip"));
+            .arg("hermip"));
     }
     Ok(())
 }
 
 fn stop_systemd_if_present() -> Result<()> {
-    let unit_dest = PathBuf::from("/etc/systemd/system/clawhip.service");
+    let unit_dest = PathBuf::from("/etc/systemd/system/hermip.service");
     if unit_dest.exists() {
         let _ = run(Command::new("sudo")
             .arg("systemctl")
             .arg("stop")
-            .arg("clawhip"));
+            .arg("hermip"));
     }
     Ok(())
 }
@@ -449,7 +449,7 @@ mod tests {
         assert!(
             error
                 .to_string()
-                .contains("does not contain a clawhip checkout")
+                .contains("does not contain a hermip checkout")
         );
     }
 
@@ -458,7 +458,7 @@ mod tests {
         let dir = tempfile::tempdir().expect("tempdir");
         let root = dir.path();
         // Create only Cargo.toml but not src/
-        std::fs::write(root.join("Cargo.toml"), "[package]\nname = \"clawhip\"")
+        std::fs::write(root.join("Cargo.toml"), "[package]\nname = \"hermip\"")
             .expect("write Cargo.toml");
 
         let error = update_from_repo(Some(root.to_str().unwrap()), false)
@@ -467,7 +467,7 @@ mod tests {
         assert!(
             error
                 .to_string()
-                .contains("does not contain a clawhip checkout")
+                .contains("does not contain a hermip checkout")
         );
     }
 

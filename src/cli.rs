@@ -45,7 +45,7 @@ pub enum Commands {
     Status,
     #[command(
         about = "Scaffold common setup presets without editing advanced routes or monitors",
-        long_about = "Scaffold the bounded quickstart preset catalog.\n\nAdvanced routes and monitors still require manual config editing or the bounded clawhip config editor."
+        long_about = "Scaffold the bounded quickstart preset catalog.\n\nAdvanced routes and monitors still require manual config editing or the bounded hermip config editor."
     )]
     Setup(SetupArgs),
     /// Send a custom event to the local daemon.
@@ -84,12 +84,12 @@ pub enum Commands {
         #[command(subcommand)]
         command: NativeCommands,
     },
-    /// Run configured cron jobs via clawhip.
+    /// Run configured cron jobs via hermip.
     Cron {
         #[command(subcommand)]
         command: CronCommands,
     },
-    /// Install clawhip from the current git clone.
+    /// Install hermip from the current git clone.
     Install {
         /// Install and start the bundled systemd service.
         #[arg(long, default_value_t = false)]
@@ -98,9 +98,9 @@ pub enum Commands {
         #[arg(long, default_value_t = false)]
         skip_star_prompt: bool,
     },
-    /// Update clawhip from the current git clone.
+    /// Update hermip from the current git clone.
     ///
-    /// Without a subcommand, behaves like the legacy `clawhip update --restart`
+    /// Without a subcommand, behaves like the legacy `hermip update --restart`
     /// (pull + reinstall + optional restart). Use subcommands for daemon-aware
     /// operations: check, approve, dismiss, status.
     Update {
@@ -110,7 +110,7 @@ pub enum Commands {
         #[arg(long, default_value_t = false)]
         restart: bool,
     },
-    /// Uninstall clawhip.
+    /// Uninstall hermip.
     Uninstall {
         #[arg(long, default_value_t = false)]
         remove_systemd: bool,
@@ -169,14 +169,14 @@ pub struct EmitArgs {
     pub fields: Vec<String>,
 }
 
-/// Arguments for `clawhip explain`.
+/// Arguments for `hermip explain`.
 ///
 /// Mirrors `EmitArgs` so operators can explain the exact same event shape
 /// they would normally emit — with `--channel`, `--format`, `--payload` JSON,
 /// and ad-hoc `--key value` fields.
 #[derive(Debug, Clone, Args)]
 pub struct ExplainArgs {
-    /// Event type (canonical or alias, same as `clawhip emit`).
+    /// Event type (canonical or alias, same as `hermip emit`).
     pub event_type: String,
     /// Emit output as JSON instead of the human-readable text report.
     #[arg(long, default_value_t = false)]
@@ -400,7 +400,7 @@ pub enum PluginCommands {
 
 #[derive(Debug, Clone, Subcommand)]
 pub enum NativeCommands {
-    /// Forward a provider-native hook payload to clawhip.
+    /// Forward a provider-native hook payload to hermip.
     Hook(NativeHookArgs),
 }
 
@@ -425,7 +425,7 @@ impl NativeHookArgs {
     pub fn read_payload(&self, stdin: &mut dyn Read) -> crate::Result<serde_json::Value> {
         match (&self.payload, &self.file) {
             (Some(_), Some(_)) => {
-                Err("provide either --payload or --file for clawhip native hook, not both".into())
+                Err("provide either --payload or --file for hermip native hook, not both".into())
             }
             (Some(payload), None) => Ok(serde_json::from_str(payload)?),
             (None, Some(path)) => {
@@ -444,7 +444,7 @@ impl NativeHookArgs {
         let trimmed = buffer.trim();
         if trimmed.is_empty() {
             return Err(
-                "clawhip native hook expects a JSON payload via stdin, --payload, or --file".into(),
+                "hermip native hook expects a JSON payload via stdin, --payload, or --file".into(),
             );
         }
         Ok(serde_json::from_str(trimmed)?)
@@ -679,7 +679,7 @@ pub struct HooksInstallArgs {
     /// Project root for project-scoped install. Defaults to the current directory.
     #[arg(long)]
     pub root: Option<PathBuf>,
-    /// Overwrite clawhip-managed generated files when they already exist.
+    /// Overwrite hermip-managed generated files when they already exist.
     #[arg(long, default_value_t = false)]
     pub force: bool,
 }
@@ -711,7 +711,7 @@ mod tests {
     #[test]
     fn parses_emit_subcommand_with_top_level_fields() {
         let cli = Cli::parse_from([
-            "clawhip",
+            "hermip",
             "emit",
             "agent.started",
             "--channel",
@@ -745,7 +745,7 @@ mod tests {
     #[test]
     fn parses_deliver_subcommand() {
         let cli = Cli::parse_from([
-            "clawhip",
+            "hermip",
             "deliver",
             "--session",
             "issue-184",
@@ -818,7 +818,7 @@ mod tests {
                 "--session".into(),
                 "issue-65".into(),
                 "--project".into(),
-                "clawhip".into(),
+                "hermip".into(),
             ],
         };
 
@@ -837,7 +837,7 @@ mod tests {
     #[test]
     fn parses_agent_finished_subcommand() {
         let cli = Cli::parse_from([
-            "clawhip",
+            "hermip",
             "agent",
             "finished",
             "--name",
@@ -870,7 +870,7 @@ mod tests {
     #[test]
     fn parses_agent_failed_subcommand() {
         let cli = Cli::parse_from([
-            "clawhip",
+            "hermip",
             "agent",
             "failed",
             "--name",
@@ -912,7 +912,7 @@ mod tests {
     #[test]
     fn parses_tmux_watch_subcommand() {
         let cli = Cli::parse_from([
-            "clawhip",
+            "hermip",
             "tmux",
             "watch",
             "-s",
@@ -948,7 +948,7 @@ mod tests {
 
     #[test]
     fn parses_tmux_list_subcommand() {
-        let cli = Cli::parse_from(["clawhip", "tmux", "list"]);
+        let cli = Cli::parse_from(["hermip", "tmux", "list"]);
 
         let Commands::Tmux { command } = cli.command.expect("tmux command") else {
             panic!("expected tmux command");
@@ -960,28 +960,28 @@ mod tests {
     #[test]
     fn parses_setup_bind_subcommand() {
         let cli = Cli::parse_from([
-            "clawhip",
+            "hermip",
             "setup",
             "--bind",
-            "clawhip=1480171113253175356",
+            "hermip=1480171113253175356",
             "--bind",
             "oh-my-codex=1480171106324189335",
             "--expect-name",
-            "clawhip=clawhip-dev",
+            "hermip=hermip-dev",
         ]);
         let Commands::Setup(args) = cli.command.expect("setup command") else {
             panic!("expected Setup");
         };
         assert_eq!(args.bind.len(), 2);
-        assert_eq!(args.bind[0], "clawhip=1480171113253175356");
+        assert_eq!(args.bind[0], "hermip=1480171113253175356");
         assert_eq!(args.bind[1], "oh-my-codex=1480171106324189335");
         assert_eq!(args.expect_name.len(), 1);
-        assert_eq!(args.expect_name[0], "clawhip=clawhip-dev");
+        assert_eq!(args.expect_name[0], "hermip=hermip-dev");
     }
 
     #[test]
     fn parses_config_verify_bindings_subcommand() {
-        let cli = Cli::parse_from(["clawhip", "config", "verify-bindings", "--json"]);
+        let cli = Cli::parse_from(["hermip", "config", "verify-bindings", "--json"]);
         let Some(Commands::Config { command }) = cli.command else {
             panic!("expected Config");
         };
@@ -993,7 +993,7 @@ mod tests {
 
     #[test]
     fn parses_config_verify_bindings_text_default() {
-        let cli = Cli::parse_from(["clawhip", "config", "verify-bindings"]);
+        let cli = Cli::parse_from(["hermip", "config", "verify-bindings"]);
         let Some(Commands::Config {
             command: Some(ConfigCommand::VerifyBindings(args)),
         }) = cli.command
@@ -1006,7 +1006,7 @@ mod tests {
     #[test]
     fn parses_setup_webhook_subcommand() {
         let cli = Cli::parse_from([
-            "clawhip",
+            "hermip",
             "setup",
             "--webhook",
             "https://discord.com/api/webhooks/123/abc",
@@ -1026,7 +1026,7 @@ mod tests {
     #[test]
     fn parses_setup_mixed_flag_subcommand() {
         let cli = Cli::parse_from([
-            "clawhip",
+            "hermip",
             "setup",
             "--webhook",
             "https://discord.com/api/webhooks/123/abc",
@@ -1059,14 +1059,14 @@ mod tests {
 
     #[test]
     fn setup_without_flags_fails_with_help() {
-        let error = Cli::try_parse_from(["clawhip", "setup"]).expect_err("setup should fail");
+        let error = Cli::try_parse_from(["hermip", "setup"]).expect_err("setup should fail");
         assert_eq!(
             error.kind(),
             ErrorKind::DisplayHelpOnMissingArgumentOrSubcommand
         );
 
         let rendered = error.to_string();
-        assert!(rendered.contains("Usage: clawhip setup [OPTIONS]"));
+        assert!(rendered.contains("Usage: hermip setup [OPTIONS]"));
         assert!(rendered.contains("--webhook"));
         assert!(rendered.contains("--bot-token"));
     }
@@ -1089,7 +1089,7 @@ mod tests {
     #[test]
     fn parses_tmux_new_with_retry_enter_disabled() {
         let cli = Cli::parse_from([
-            "clawhip",
+            "hermip",
             "tmux",
             "new",
             "-s",
@@ -1117,7 +1117,7 @@ mod tests {
     #[test]
     fn parses_tmux_new_with_retry_enter_backoff_overrides() {
         let cli = Cli::parse_from([
-            "clawhip",
+            "hermip",
             "tmux",
             "new",
             "-s",
@@ -1149,9 +1149,9 @@ mod tests {
     fn tmux_new_defaults_to_non_follow_mode_for_194() {
         // Regression for #194: the default launcher path MUST return control
         // to the caller after the session is created. If `follow` defaulted
-        // back to true, `clawhip tmux new` would once again block for the
+        // back to true, `hermip tmux new` would once again block for the
         // session lifetime and expose callers to false-negative SIGKILL.
-        let cli = Cli::parse_from(["clawhip", "tmux", "new", "-s", "issue-194", "--", "codex"]);
+        let cli = Cli::parse_from(["hermip", "tmux", "new", "-s", "issue-194", "--", "codex"]);
 
         let Commands::Tmux { command } = cli.command.expect("tmux command") else {
             panic!("expected tmux command");
@@ -1166,7 +1166,7 @@ mod tests {
     #[test]
     fn parses_tmux_new_with_explicit_follow_flag() {
         let cli = Cli::parse_from([
-            "clawhip",
+            "hermip",
             "tmux",
             "new",
             "-s",
@@ -1188,7 +1188,7 @@ mod tests {
 
     #[test]
     fn parses_plugin_list_subcommand() {
-        let cli = Cli::parse_from(["clawhip", "plugin", "list"]);
+        let cli = Cli::parse_from(["hermip", "plugin", "list"]);
 
         let Commands::Plugin { command } = cli.command.expect("plugin command") else {
             panic!("expected plugin command");
@@ -1200,7 +1200,7 @@ mod tests {
     #[test]
     fn parses_native_hook_subcommand() {
         let cli = Cli::parse_from([
-            "clawhip",
+            "hermip",
             "native",
             "hook",
             "--provider",
@@ -1224,7 +1224,7 @@ mod tests {
 
     #[test]
     fn parses_cron_run_subcommand() {
-        let cli = Cli::parse_from(["clawhip", "cron", "run", "dev-followup"]);
+        let cli = Cli::parse_from(["hermip", "cron", "run", "dev-followup"]);
 
         let Commands::Cron { command } = cli.command.expect("cron command") else {
             panic!("expected cron command");
@@ -1266,20 +1266,20 @@ mod tests {
         assert!(
             error
                 .to_string()
-                .contains("clawhip native hook expects a JSON payload")
+                .contains("hermip native hook expects a JSON payload")
         );
     }
 
     #[test]
     fn parses_memory_init_subcommand() {
         let cli = Cli::parse_from([
-            "clawhip",
+            "hermip",
             "memory",
             "init",
             "--root",
             "/tmp/workspace",
             "--project",
-            "clawhip",
+            "hermip",
             "--channel",
             "discord-alerts",
             "--agent",
@@ -1298,7 +1298,7 @@ mod tests {
         };
 
         assert_eq!(args.root, Some(PathBuf::from("/tmp/workspace")));
-        assert_eq!(args.project.as_deref(), Some("clawhip"));
+        assert_eq!(args.project.as_deref(), Some("hermip"));
         assert_eq!(args.channel.as_deref(), Some("discord-alerts"));
         assert_eq!(args.agent.as_deref(), Some("codex"));
         assert_eq!(args.date.as_deref(), Some("2026-03-10"));
@@ -1308,13 +1308,13 @@ mod tests {
     #[test]
     fn parses_memory_status_subcommand() {
         let cli = Cli::parse_from([
-            "clawhip",
+            "hermip",
             "memory",
             "status",
             "--root",
             "/tmp/workspace",
             "--project",
-            "clawhip",
+            "hermip",
             "--agent",
             "codex",
         ]);
@@ -1328,7 +1328,7 @@ mod tests {
         };
 
         assert_eq!(args.root, Some(PathBuf::from("/tmp/workspace")));
-        assert_eq!(args.project.as_deref(), Some("clawhip"));
+        assert_eq!(args.project.as_deref(), Some("hermip"));
         assert_eq!(args.channel, None);
         assert_eq!(args.agent.as_deref(), Some("codex"));
         assert_eq!(args.date, None);
@@ -1336,7 +1336,7 @@ mod tests {
 
     #[test]
     fn parses_install_subcommand_with_skip_star_prompt() {
-        let cli = Cli::parse_from(["clawhip", "install", "--systemd", "--skip-star-prompt"]);
+        let cli = Cli::parse_from(["hermip", "install", "--systemd", "--skip-star-prompt"]);
 
         let Commands::Install {
             systemd,
@@ -1353,7 +1353,7 @@ mod tests {
     #[test]
     fn parses_hooks_install_subcommand() {
         let cli = Cli::parse_from([
-            "clawhip",
+            "hermip",
             "hooks",
             "install",
             "--provider",
@@ -1383,7 +1383,7 @@ mod tests {
 
     #[test]
     fn parses_hooks_install_all_flag() {
-        let cli = Cli::parse_from(["clawhip", "hooks", "install", "--all"]);
+        let cli = Cli::parse_from(["hermip", "hooks", "install", "--all"]);
 
         let Commands::Hooks { command } = cli.command.expect("hooks command") else {
             panic!("expected hooks command");
@@ -1398,7 +1398,7 @@ mod tests {
     #[test]
     fn parses_hooks_install_with_global_scope_and_force() {
         let cli = Cli::parse_from([
-            "clawhip",
+            "hermip",
             "hooks",
             "install",
             "--provider",
@@ -1421,7 +1421,7 @@ mod tests {
 
     #[test]
     fn bare_update_preserves_legacy_restart_flag() {
-        let cli = Cli::parse_from(["clawhip", "update", "--restart"]);
+        let cli = Cli::parse_from(["hermip", "update", "--restart"]);
 
         let Commands::Update { command, restart } = cli.command.expect("update command") else {
             panic!("expected update command");
@@ -1433,7 +1433,7 @@ mod tests {
 
     #[test]
     fn bare_update_without_restart_defaults_to_false() {
-        let cli = Cli::parse_from(["clawhip", "update"]);
+        let cli = Cli::parse_from(["hermip", "update"]);
 
         let Commands::Update { command, restart } = cli.command.expect("update command") else {
             panic!("expected update command");
@@ -1445,7 +1445,7 @@ mod tests {
 
     #[test]
     fn parses_update_check_subcommand() {
-        let cli = Cli::parse_from(["clawhip", "update", "check"]);
+        let cli = Cli::parse_from(["hermip", "update", "check"]);
 
         let Commands::Update { command, .. } = cli.command.expect("update command") else {
             panic!("expected update command");
@@ -1456,7 +1456,7 @@ mod tests {
 
     #[test]
     fn parses_update_approve_subcommand() {
-        let cli = Cli::parse_from(["clawhip", "update", "approve"]);
+        let cli = Cli::parse_from(["hermip", "update", "approve"]);
 
         let Commands::Update { command, .. } = cli.command.expect("update command") else {
             panic!("expected update command");
@@ -1467,7 +1467,7 @@ mod tests {
 
     #[test]
     fn parses_update_dismiss_subcommand() {
-        let cli = Cli::parse_from(["clawhip", "update", "dismiss"]);
+        let cli = Cli::parse_from(["hermip", "update", "dismiss"]);
 
         let Commands::Update { command, .. } = cli.command.expect("update command") else {
             panic!("expected update command");
@@ -1478,7 +1478,7 @@ mod tests {
 
     #[test]
     fn parses_update_status_subcommand() {
-        let cli = Cli::parse_from(["clawhip", "update", "status"]);
+        let cli = Cli::parse_from(["hermip", "update", "status"]);
 
         let Commands::Update { command, .. } = cli.command.expect("update command") else {
             panic!("expected update command");

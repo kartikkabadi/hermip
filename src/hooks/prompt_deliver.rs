@@ -224,7 +224,7 @@ fn detect_hook_setup(cwd: &Path) -> Result<HookSetup> {
         }
         if has_omx_prompt_submit_hook(directory) && !providers.contains(&ProviderKind::Omx) {
             providers.push(ProviderKind::Omx);
-            sources.push(".omx/hooks/clawhip.mjs");
+            sources.push(".omx/hooks/hermip.mjs");
         }
 
         if !providers.is_empty() {
@@ -238,7 +238,7 @@ fn detect_hook_setup(cwd: &Path) -> Result<HookSetup> {
     }
 
     Err(format!(
-        "refusing delivery: '{}' is not inside a repo/workdir with prompt-submit-aware hook setup; run `clawhip hooks install --all --scope project` or install a prompt-submit-aware legacy OMX bridge in .omx/hooks/",
+        "refusing delivery: '{}' is not inside a repo/workdir with prompt-submit-aware hook setup; run `hermip hooks install --all --scope project` or install a prompt-submit-aware legacy OMX bridge in .omx/hooks/",
         cwd.display()
     )
     .into())
@@ -255,10 +255,10 @@ fn has_claude_prompt_submit_hook(root: &Path) -> bool {
     value
         .pointer("/hooks/UserPromptSubmit")
         .and_then(serde_json::Value::as_array)
-        .is_some_and(|entries| entries.iter().any(json_hook_entry_mentions_clawhip))
+        .is_some_and(|entries| entries.iter().any(json_hook_entry_mentions_hermip))
 }
 
-fn json_hook_entry_mentions_clawhip(entry: &serde_json::Value) -> bool {
+fn json_hook_entry_mentions_hermip(entry: &serde_json::Value) -> bool {
     entry
         .get("hooks")
         .and_then(serde_json::Value::as_array)
@@ -266,7 +266,7 @@ fn json_hook_entry_mentions_clawhip(entry: &serde_json::Value) -> bool {
             hooks.iter().any(|hook| {
                 hook.get("command")
                     .and_then(serde_json::Value::as_str)
-                    .is_some_and(command_mentions_clawhip)
+                    .is_some_and(command_mentions_hermip)
             })
         })
 }
@@ -286,7 +286,7 @@ fn has_codex_prompt_submit_hook_json(root: &Path) -> bool {
     value
         .pointer("/hooks/UserPromptSubmit")
         .and_then(serde_json::Value::as_array)
-        .is_some_and(|entries| entries.iter().any(json_hook_entry_mentions_clawhip))
+        .is_some_and(|entries| entries.iter().any(json_hook_entry_mentions_hermip))
 }
 
 fn has_codex_prompt_submit_hook_toml(root: &Path) -> bool {
@@ -302,7 +302,7 @@ fn has_codex_prompt_submit_hook_toml(root: &Path) -> bool {
         .and_then(|native| native.get("events"))
         .and_then(|events| events.get("UserPromptSubmit"))
         .and_then(toml::Value::as_str)
-        .is_some_and(command_mentions_clawhip)
+        .is_some_and(command_mentions_hermip)
 }
 
 fn has_native_prompt_submit_hook_script(root: &Path) -> bool {
@@ -314,16 +314,16 @@ fn has_native_prompt_submit_hook_script(root: &Path) -> bool {
 }
 
 fn has_omx_prompt_submit_hook(root: &Path) -> bool {
-    let path = root.join(".omx/hooks/clawhip.mjs");
+    let path = root.join(".omx/hooks/hermip.mjs");
     let Ok(content) = fs::read_to_string(path) else {
         return false;
     };
     content.contains("prompt-submit.json") || content.contains("prompt_submit_recorded")
 }
 
-fn command_mentions_clawhip(command: &str) -> bool {
+fn command_mentions_hermip(command: &str) -> bool {
     let normalized = command.trim().to_ascii_lowercase();
-    normalized.contains("clawhip native hook")
+    normalized.contains("hermip native hook")
         || normalized.contains(".hermip/hooks/native-hook.mjs")
         || normalized.contains("native-hook.mjs")
 }
@@ -583,7 +583,7 @@ mod tests {
     fn has_prompt_char_rejects_empty_and_output_lines() {
         assert!(!has_prompt_char(""));
         assert!(!has_prompt_char("   "));
-        assert!(!has_prompt_char("compiling clawhip v0.5.0"));
+        assert!(!has_prompt_char("compiling hermip v0.5.0"));
         assert!(!has_prompt_char("error[E0308]: mismatched types"));
     }
 
@@ -648,8 +648,8 @@ mod tests {
         let hook_dir = repo.join(".omx/hooks");
         fs::create_dir_all(&hook_dir).expect("create hook dir");
         fs::write(
-            hook_dir.join("clawhip.mjs"),
-            "import { createClawhipOmxClient } from './clawhip-sdk.mjs';\nexport async function onHookEvent(event, sdk) { return { ok: true }; }\n",
+            hook_dir.join("hermip.mjs"),
+            "import { createClawhipOmxClient } from './hermip-sdk.mjs';\nexport async function onHookEvent(event, sdk) { return { ok: true }; }\n",
         )
         .expect("write old hook");
 

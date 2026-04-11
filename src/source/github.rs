@@ -34,7 +34,7 @@ impl Source for GitHubSource {
         let github_client = match build_github_client(self.config.monitor_github_token()) {
             Ok(client) => Some(client),
             Err(error) => {
-                eprintln!("clawhip source github: failed to build GitHub client: {error}");
+                eprintln!("hermip source github: failed to build GitHub client: {error}");
                 None
             }
         };
@@ -119,7 +119,7 @@ async fn run_github_poll_cycle(
     state: &mut HashMap<String, GitHubRepoState>,
 ) {
     if let Err(error) = poll_github(config, github_client, tx, state).await {
-        eprintln!("clawhip source github poll failed: {error}");
+        eprintln!("hermip source github poll failed: {error}");
     }
 }
 
@@ -129,7 +129,7 @@ async fn snapshot_github_repo(repo: &GitRepoMonitor) -> Result<GitSnapshot> {
         Err(error) => match repo.github_repo.clone() {
             Some(github_repo) => {
                 eprintln!(
-                    "clawhip source github snapshot failed for {}: {error}; using configured github_repo={github_repo}",
+                    "hermip source github snapshot failed for {}: {error}; using configured github_repo={github_repo}",
                     repo.path
                 );
                 Ok(GitSnapshot {
@@ -162,7 +162,7 @@ async fn poll_github(
             Ok(snapshot) => snapshot,
             Err(error) => {
                 eprintln!(
-                    "clawhip source github snapshot failed for {}: {error}",
+                    "hermip source github snapshot failed for {}: {error}",
                     repo.path
                 );
                 continue;
@@ -174,7 +174,7 @@ async fn poll_github(
             Ok(issues) => issues,
             Err(error) => {
                 eprintln!(
-                    "clawhip source GitHub issue processing failed for {}: {error}",
+                    "hermip source GitHub issue processing failed for {}: {error}",
                     repo.path
                 );
                 previous
@@ -187,7 +187,7 @@ async fn poll_github(
                 Ok(prs) => prs,
                 Err(error) => {
                     eprintln!(
-                        "clawhip source GitHub pull request processing failed for {}: {error}",
+                        "hermip source GitHub pull request processing failed for {}: {error}",
                         repo.path
                     );
                     previous.map(|entry| entry.prs.clone()).unwrap_or_default()
@@ -199,7 +199,7 @@ async fn poll_github(
             Ok(ci) => ci,
             Err(error) => {
                 eprintln!(
-                    "clawhip source GitHub CI processing failed for {}: {error}",
+                    "hermip source GitHub CI processing failed for {}: {error}",
                     repo.path
                 );
                 previous.map(|entry| entry.ci.clone()).unwrap_or_default()
@@ -245,7 +245,7 @@ async fn poll_issues(
         }
         Err(error) => {
             eprintln!(
-                "clawhip source GitHub issue polling failed for {}: {error}",
+                "hermip source GitHub issue polling failed for {}: {error}",
                 repo.path
             );
             Ok(previous
@@ -302,7 +302,7 @@ async fn poll_pull_requests(
         }
         Err(error) => {
             eprintln!(
-                "clawhip source GitHub polling failed for {}: {error}",
+                "hermip source GitHub polling failed for {}: {error}",
                 repo.path
             );
             Ok(previous.map(|entry| entry.prs.clone()).unwrap_or_default())
@@ -352,7 +352,7 @@ async fn poll_ci_statuses(
         }
         Err(error) => {
             eprintln!(
-                "clawhip source GitHub CI polling failed for {}: {error}",
+                "hermip source GitHub CI polling failed for {}: {error}",
                 repo.path
             );
             Ok(previous.map(|entry| entry.ci.clone()).unwrap_or_default())
@@ -378,18 +378,18 @@ async fn github_get(
         api_base.trim_end_matches('/'),
         path.trim_start_matches('/')
     );
-    eprintln!("clawhip source github: GET {url} ({context})");
+    eprintln!("hermip source github: GET {url} ({context})");
 
     let response = client.get(&url).query(query).send().await?;
     let status = response.status();
 
     if !status.is_success() {
         let body = response.text().await.unwrap_or_default();
-        eprintln!("clawhip source github: GET {url} ({context}) failed with {status}: {body}");
+        eprintln!("hermip source github: GET {url} ({context}) failed with {status}: {body}");
         return Err(format!("GitHub API request failed with {status}: {body}").into());
     }
 
-    eprintln!("clawhip source github: GET {url} ({context}) -> {status}");
+    eprintln!("hermip source github: GET {url} ({context}) -> {status}");
     Ok(response)
 }
 
@@ -723,7 +723,7 @@ fn workflow_run_id(url: &str) -> Option<String> {
 
 fn build_github_client(token: Option<String>) -> Result<reqwest::Client> {
     let mut headers = HeaderMap::new();
-    headers.insert(USER_AGENT, HeaderValue::from_static("clawhip/0.1"));
+    headers.insert(USER_AGENT, HeaderValue::from_static("hermip/0.1"));
     headers.insert(
         ACCEPT,
         HeaderValue::from_static("application/vnd.github+json"),
@@ -837,8 +837,8 @@ mod tests {
     #[tokio::test]
     async fn new_issue_events_apply_route_channel_and_mention_over_repo_monitor_channel() {
         let repo = GitRepoMonitor {
-            path: "/tmp/clawhip".into(),
-            name: Some("clawhip".into()),
+            path: "/tmp/hermip".into(),
+            name: Some("hermip".into()),
             channel: Some("dev-channel".into()),
             ..GitRepoMonitor::default()
         };
@@ -853,10 +853,10 @@ mod tests {
         )]
         .into_iter()
         .collect();
-        let events = collect_issue_events(&repo, "clawhip", &previous, &current);
+        let events = collect_issue_events(&repo, "hermip", &previous, &current);
         assert_eq!(events.len(), 1);
         assert_eq!(events[0].canonical_kind(), "github.issue-opened");
-        assert_eq!(events[0].payload["repo"], "clawhip");
+        assert_eq!(events[0].payload["repo"], "hermip");
 
         let config = AppConfig {
             defaults: DefaultsConfig {
@@ -867,7 +867,7 @@ mod tests {
             routes: vec![RouteRule {
                 event: "github.*".into(),
                 sink: "discord".into(),
-                filter: [("repo".to_string(), "clawhip".to_string())]
+                filter: [("repo".to_string(), "hermip".to_string())]
                     .into_iter()
                     .collect(),
                 channel: Some("route-channel".into()),
@@ -891,8 +891,8 @@ mod tests {
     #[test]
     fn issue_comment_and_close_events_are_emitted() {
         let repo = GitRepoMonitor {
-            path: "/tmp/clawhip".into(),
-            name: Some("clawhip".into()),
+            path: "/tmp/hermip".into(),
+            name: Some("hermip".into()),
             ..GitRepoMonitor::default()
         };
         let previous = [(
@@ -915,7 +915,7 @@ mod tests {
         )]
         .into_iter()
         .collect();
-        let events = collect_issue_events(&repo, "clawhip", &previous, &current);
+        let events = collect_issue_events(&repo, "hermip", &previous, &current);
         assert!(
             events
                 .iter()
@@ -940,7 +940,7 @@ mod tests {
             status: status.into(),
             conclusion: conclusion.map(ToString::to_string),
             sha: "abcdef1234567890".into(),
-            url: "https://github.com/Yeachan-Heo/clawhip/actions/runs/1".into(),
+            url: "https://github.com/Yeachan-Heo/hermip/actions/runs/1".into(),
             branch: Some("feat/github-ci-events".into()),
             run_id: Some("1".into()),
             run_job_count: 1,
@@ -1141,8 +1141,8 @@ mod tests {
     #[test]
     fn initial_ci_detection_emits_started_event_with_route_metadata() {
         let repo = GitRepoMonitor {
-            path: "/tmp/clawhip".into(),
-            name: Some("clawhip".into()),
+            path: "/tmp/hermip".into(),
+            name: Some("hermip".into()),
             channel: Some("dev-channel".into()),
             mention: Some("<@123>".into()),
             format: Some(MessageFormat::Alert),
@@ -1154,41 +1154,41 @@ mod tests {
             .into_iter()
             .collect();
 
-        let events = collect_ci_events(&repo, "clawhip", &previous, &current);
+        let events = collect_ci_events(&repo, "hermip", &previous, &current);
         assert_eq!(events.len(), 1);
         assert_eq!(events[0].canonical_kind(), "github.ci-started");
         assert_eq!(events[0].channel.as_deref(), Some("dev-channel"));
         assert_eq!(events[0].mention.as_deref(), Some("<@123>"));
         assert_eq!(events[0].format, Some(MessageFormat::Alert));
-        assert_eq!(events[0].payload["repo"], json!("clawhip"));
+        assert_eq!(events[0].payload["repo"], json!("hermip"));
         assert_eq!(events[0].payload["number"], json!(58));
         assert_eq!(events[0].payload["workflow"], json!("CI / test"));
         assert_eq!(events[0].payload["status"], json!("in_progress"));
         assert_eq!(events[0].payload["sha"], json!("abcdef1234567890"));
         assert_eq!(
             events[0].payload["url"],
-            json!("https://github.com/Yeachan-Heo/clawhip/actions/runs/1")
+            json!("https://github.com/Yeachan-Heo/hermip/actions/runs/1")
         );
     }
 
     #[test]
     fn unchanged_ci_state_is_suppressed() {
         let repo = GitRepoMonitor {
-            path: "/tmp/clawhip".into(),
+            path: "/tmp/hermip".into(),
             ..GitRepoMonitor::default()
         };
         let ci = ci_snapshot(58, "CI / test", "in_progress", None);
         let previous = [(ci.dedupe_key(), ci.clone())].into_iter().collect();
         let current = [(ci.dedupe_key(), ci)].into_iter().collect();
 
-        let events = collect_ci_events(&repo, "clawhip", &previous, &current);
+        let events = collect_ci_events(&repo, "hermip", &previous, &current);
         assert!(events.is_empty());
     }
 
     #[test]
     fn ci_state_transition_to_failed_emits_failed_event() {
         let repo = GitRepoMonitor {
-            path: "/tmp/clawhip".into(),
+            path: "/tmp/hermip".into(),
             ..GitRepoMonitor::default()
         };
         let previous_ci = ci_snapshot(58, "CI / test", "in_progress", None);
@@ -1200,7 +1200,7 @@ mod tests {
             .into_iter()
             .collect();
 
-        let events = collect_ci_events(&repo, "clawhip", &previous, &current);
+        let events = collect_ci_events(&repo, "hermip", &previous, &current);
         assert_eq!(events.len(), 1);
         assert_eq!(events[0].canonical_kind(), "github.ci-failed");
         assert_eq!(events[0].payload["workflow"], json!("CI / test"));
@@ -1211,7 +1211,7 @@ mod tests {
     #[test]
     fn ci_state_transition_to_passed_emits_passed_event() {
         let repo = GitRepoMonitor {
-            path: "/tmp/clawhip".into(),
+            path: "/tmp/hermip".into(),
             ..GitRepoMonitor::default()
         };
         let previous_ci = ci_snapshot(58, "CI / test", "in_progress", None);
@@ -1223,7 +1223,7 @@ mod tests {
             .into_iter()
             .collect();
 
-        let events = collect_ci_events(&repo, "clawhip", &previous, &current);
+        let events = collect_ci_events(&repo, "hermip", &previous, &current);
         assert_eq!(events.len(), 1);
         assert_eq!(events[0].canonical_kind(), "github.ci-passed");
     }
@@ -1231,7 +1231,7 @@ mod tests {
     #[test]
     fn ci_state_transition_to_cancelled_emits_cancelled_event() {
         let repo = GitRepoMonitor {
-            path: "/tmp/clawhip".into(),
+            path: "/tmp/hermip".into(),
             ..GitRepoMonitor::default()
         };
         let previous_ci = ci_snapshot(58, "CI / test", "in_progress", None);
@@ -1243,7 +1243,7 @@ mod tests {
             .into_iter()
             .collect();
 
-        let events = collect_ci_events(&repo, "clawhip", &previous, &current);
+        let events = collect_ci_events(&repo, "hermip", &previous, &current);
         assert_eq!(events.len(), 1);
         assert_eq!(events[0].canonical_kind(), "github.ci-cancelled");
     }
@@ -1282,7 +1282,7 @@ mod tests {
     #[tokio::test]
     async fn snapshot_falls_back_to_configured_github_repo_without_local_clone() {
         let repo = GitRepoMonitor {
-            path: "/tmp/clawhip-test-private-repo-missing".into(),
+            path: "/tmp/hermip-test-private-repo-missing".into(),
             name: Some("private-repo".into()),
             github_repo: Some("owner/private-repo".into()),
             ..GitRepoMonitor::default()
@@ -1325,7 +1325,7 @@ mod tests {
         config.monitors.poll_interval_secs = 1;
         config.monitors.github_api_base = format!("http://{addr}");
         config.monitors.git.repos = vec![GitRepoMonitor {
-            path: "/tmp/clawhip-test-private-repo-missing".into(),
+            path: "/tmp/hermip-test-private-repo-missing".into(),
             name: Some("private-repo".into()),
             github_repo: Some("owner/private-repo".into()),
             emit_commits: false,

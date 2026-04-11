@@ -27,7 +27,7 @@ pub fn install(args: HooksInstallArgs) -> Result<()> {
         println!("  {}", path.display());
     }
     println!("Supported shared events: {}", SHARED_HOOK_EVENTS.join(", "));
-    println!("Ingress: clawhip native hook --provider <codex|claude-code>");
+    println!("Ingress: hermip native hook --provider <codex|claude-code>");
 
     Ok(())
 }
@@ -286,11 +286,13 @@ mod tests {
     #[test]
     fn install_project_scope_writes_generic_provider_files() {
         let dir = tempdir().expect("tempdir");
+        // Canonicalize to handle macOS /private/var/folders symlink situation
+        let canonical_dir = dir.path().canonicalize().expect("canonicalize");
         let report = run_install(&HooksInstallArgs {
             all: true,
             provider: Vec::new(),
             scope: HookInstallScope::Project,
-            root: Some(dir.path().to_path_buf()),
+            root: Some(canonical_dir.clone()),
             force: false,
         })
         .expect("install");
@@ -298,22 +300,22 @@ mod tests {
         assert!(
             report
                 .generated_files
-                .contains(&dir.path().join(HOOK_SCRIPT))
+                .contains(&canonical_dir.join(HOOK_SCRIPT))
         );
         assert!(
             report
                 .generated_files
-                .contains(&dir.path().join(CLAWHIP_PROJECT_FILE))
+                .contains(&canonical_dir.join(CLAWHIP_PROJECT_FILE))
         );
         assert!(
             report
                 .generated_files
-                .contains(&dir.path().join(CODEX_HOOKS_FILE))
+                .contains(&canonical_dir.join(CODEX_HOOKS_FILE))
         );
         assert!(
             report
                 .generated_files
-                .contains(&dir.path().join(CLAUDE_SETTINGS_FILE))
+                .contains(&canonical_dir.join(CLAUDE_SETTINGS_FILE))
         );
     }
 

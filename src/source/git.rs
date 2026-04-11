@@ -447,7 +447,7 @@ fn clear_monitor_failure(state: &mut GitMonitorState, path: &str, context: &str)
         return;
     };
     eprintln!(
-        "clawhip source git {context} recovered for {path} after {} failure(s) and {} suppressed poll(s)",
+        "hermip source git {context} recovered for {path} after {} failure(s) and {} suppressed poll(s)",
         previous.attempts, previous.suppressed_polls
     );
 }
@@ -474,7 +474,7 @@ fn record_monitor_failure(
     };
     let backoff = git_monitor_backoff(attempts, poll_interval);
     eprintln!(
-        "clawhip source git {context} degraded for {path}: class={}, attempts={}, suppressed={}, next_retry_secs={}, error={message}",
+        "hermip source git {context} degraded for {path}: class={}, attempts={}, suppressed={}, next_retry_secs={}, error={message}",
         classification.as_str(),
         attempts,
         suppressed_polls,
@@ -582,12 +582,12 @@ mod tests {
     #[test]
     fn parses_github_repo_urls() {
         assert_eq!(
-            parse_github_repo("git@github.com:bellman/clawhip.git"),
-            Some("bellman/clawhip".to_string())
+            parse_github_repo("git@github.com:bellman/hermip.git"),
+            Some("bellman/hermip".to_string())
         );
         assert_eq!(
-            parse_github_repo("https://github.com/bellman/clawhip.git"),
-            Some("bellman/clawhip".to_string())
+            parse_github_repo("https://github.com/bellman/hermip.git"),
+            Some("bellman/hermip".to_string())
         );
     }
 
@@ -623,7 +623,7 @@ mod tests {
 
         let repo = GitRepoMonitor {
             path: path_str(&root).to_string(),
-            name: Some("clawhip".into()),
+            name: Some("hermip".into()),
             ..GitRepoMonitor::default()
         };
         let config = AppConfig {
@@ -644,9 +644,14 @@ mod tests {
         poll_git(&config, &tx, &mut state).await.unwrap();
         let branch_event = rx.try_recv().unwrap();
         assert_eq!(branch_event.kind, "git.branch-changed");
-        assert_eq!(branch_event.payload["repo"], "clawhip");
+        assert_eq!(branch_event.payload["repo"], "hermip");
         assert_eq!(branch_event.payload["repo_path"], path_str(&root));
-        assert_eq!(branch_event.payload["worktree_path"], path_str(&worktree));
+        // Canonicalize to handle macOS /private/var/folders symlink situation
+        let canonical_worktree = worktree.canonicalize().expect("canonicalize");
+        assert_eq!(
+            branch_event.payload["worktree_path"],
+            canonical_worktree.to_str().unwrap()
+        );
         assert_eq!(branch_event.payload["old_branch"], "feat/issue-115");
         assert_eq!(branch_event.payload["new_branch"], "feat/issue-115-v2");
         assert!(rx.try_recv().is_err());
@@ -658,9 +663,14 @@ mod tests {
         poll_git(&config, &tx, &mut state).await.unwrap();
         let commit_event = rx.try_recv().unwrap();
         assert_eq!(commit_event.kind, "git.commit");
-        assert_eq!(commit_event.payload["repo"], "clawhip");
+        assert_eq!(commit_event.payload["repo"], "hermip");
         assert_eq!(commit_event.payload["repo_path"], path_str(&root));
-        assert_eq!(commit_event.payload["worktree_path"], path_str(&worktree));
+        // Canonicalize to handle macOS /private/var/folders symlink situation
+        let canonical_worktree = worktree.canonicalize().expect("canonicalize");
+        assert_eq!(
+            commit_event.payload["worktree_path"],
+            canonical_worktree.to_str().unwrap()
+        );
         assert_eq!(commit_event.payload["branch"], "feat/issue-115-v2");
         assert_eq!(commit_event.payload["summary"], "worktree commit");
         assert!(rx.try_recv().is_err());

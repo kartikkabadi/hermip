@@ -141,7 +141,7 @@ pub struct RouteRule {
     pub sink: String,
     pub channel: Option<String>,
     /// Human-readable Discord channel name hint for binding verification.
-    /// When set, `clawhip config verify-bindings` compares the live channel
+    /// When set, `hermip config verify-bindings` compares the live channel
     /// name against this value to detect drift.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub channel_name: Option<String>,
@@ -933,7 +933,7 @@ impl AppConfig {
     }
 
     pub fn run_interactive_editor(&mut self, path: &Path) -> Result<()> {
-        println!("clawhip config editor");
+        println!("hermip config editor");
         println!("Path: {}", path.display());
         println!();
         loop {

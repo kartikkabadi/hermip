@@ -30,9 +30,9 @@ explicitly.
 Use the generic provider-native thin client:
 
 ```bash
-clawhip native hook --provider codex --file payload.json
-clawhip native hook --provider claude --file payload.json
-cat payload.json | clawhip native hook --provider codex
+hermip native hook --provider codex --file payload.json
+hermip native hook --provider claude --file payload.json
+cat payload.json | hermip native hook --provider codex
 ```
 
 This keeps local verification, fixture testing, and provider-side forwarding on one public
@@ -118,7 +118,7 @@ Default clawhip formatting should stay low-noise:
 Provider-native configuration is now the supported setup path.
 
 1. Codex or Claude owns hook registration plus scope precedence
-2. clawhip ingests the provider payload through `clawhip native hook`
+2. clawhip ingests the provider payload through `hermip native hook`
 3. clawhip loads project metadata plus additive augmenters
 4. clawhip owns channel routing, mentions, formatting, and delivery
 

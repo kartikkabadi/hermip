@@ -644,7 +644,7 @@ async function main() {
   maybeWritePromptSubmitState(repoRoot, provider, eventName, input);
   maybeEnrichStopEvent(repoRoot, payload, eventName);
 
-  spawnSync('clawhip', ['native', 'hook', '--provider', provider], {
+  spawnSync('hermip', ['native', 'hook', '--provider', provider], {
     input: JSON.stringify(payload),
     encoding: 'utf8',
     stdio: ['pipe', 'ignore', 'ignore'],
@@ -963,7 +963,7 @@ mod tests {
         for (event_name, provider, expected_kind) in cases {
             let event = incoming_event_from_native_hook_json(&json!({
                 "provider": provider,
-                "directory": "/repo/clawhip",
+                "directory": "/repo/hermip",
                 "event_name": event_name,
                 "event_payload": {
                     "tool_name": "Bash",
@@ -976,7 +976,7 @@ mod tests {
                 "unexpected kind for {event_name}"
             );
             assert_eq!(event.payload["provider"], json!(provider));
-            assert_eq!(event.payload["repo_name"], json!("clawhip"));
+            assert_eq!(event.payload["repo_name"], json!("hermip"));
         }
     }
 
@@ -987,9 +987,9 @@ mod tests {
         fs::write(
             dir.path().join(CLAWHIP_PROJECT_FILE),
             serde_json::to_string_pretty(&json!({
-                "id": "clawhip-core",
-                "name": "clawhip",
-                "repo_name": "clawhip"
+                "id": "hermip-core",
+                "name": "hermip",
+                "repo_name": "hermip"
             }))
             .unwrap(),
         )
@@ -1003,11 +1003,11 @@ mod tests {
         }))
         .expect("event");
 
-        assert_eq!(event.payload["project_id"], json!("clawhip-core"));
-        assert_eq!(event.payload["project_name"], json!("clawhip"));
+        assert_eq!(event.payload["project_id"], json!("hermip-core"));
+        assert_eq!(event.payload["project_name"], json!("hermip"));
         assert_eq!(
             event.payload["project_metadata"]["repo_name"],
-            json!("clawhip")
+            json!("hermip")
         );
     }
 
@@ -1015,7 +1015,7 @@ mod tests {
     fn augmentation_can_add_context_without_overriding_base_fields() {
         let event = incoming_event_from_native_hook_json(&json!({
             "provider": "claude-code",
-            "directory": "/repo/clawhip",
+            "directory": "/repo/hermip",
             "event_name": "SessionStart",
             "augmentation": {
                 "summary": "extra setup context",
@@ -1031,7 +1031,7 @@ mod tests {
         }))
         .expect("event");
 
-        assert_eq!(event.payload["repo_name"], json!("clawhip"));
+        assert_eq!(event.payload["repo_name"], json!("hermip"));
         assert_eq!(event.payload["summary"], json!("extra setup context"));
         assert_eq!(
             event.payload["message_context"]["repo_name"],
@@ -1044,16 +1044,16 @@ mod tests {
     fn generated_hook_script_mentions_augment_pipeline() {
         let script = generated_hook_script();
         assert!(script.contains(".hermip/hooks/augment"));
-        assert!(script.contains("clawhip', ['native', 'hook'"));
+        assert!(script.contains("hermip', ['native', 'hook'"));
     }
 
     #[test]
     fn preserves_tmux_metadata_from_native_payloads() {
         let event = incoming_event_from_native_hook_json(&json!({
             "provider": "codex",
-            "directory": "/repo/clawhip",
+            "directory": "/repo/hermip",
             "event_name": "SessionStart",
-            "tmux_session": "omx-clawhip-dev",
+            "tmux_session": "omx-hermip-dev",
             "tmux_window": "3",
             "tmux_pane": "%17",
             "tmux_pane_tty": "/dev/pts/5",
@@ -1063,7 +1063,7 @@ mod tests {
         }))
         .expect("event");
 
-        assert_eq!(event.payload["tmux_session"], json!("omx-clawhip-dev"));
+        assert_eq!(event.payload["tmux_session"], json!("omx-hermip-dev"));
         assert_eq!(event.payload["tmux_window"], json!("3"));
         assert_eq!(event.payload["tmux_pane"], json!("%17"));
         assert_eq!(event.payload["tmux_pane_tty"], json!("/dev/pts/5"));
@@ -1091,7 +1091,7 @@ mod tests {
     fn preserves_nested_tmux_metadata_from_native_payloads() {
         let event = incoming_event_from_native_hook_json(&json!({
             "provider": "codex",
-            "directory": "/repo/clawhip",
+            "directory": "/repo/hermip",
             "event_name": "SessionStart",
             "tmux": {
                 "session": "issue-180",
@@ -1189,7 +1189,7 @@ mod tests {
     fn stop_event_payload_surfaces_stop_context_summary() {
         let event = incoming_event_from_native_hook_json(&json!({
             "provider": "claude-code",
-            "directory": "/repo/clawhip",
+            "directory": "/repo/hermip",
             "event_name": "Stop",
             "stop_context": {
                 "last_prompt_at": "2026-04-10T12:34:56Z",
@@ -1223,7 +1223,7 @@ mod tests {
     fn stop_event_without_stop_context_does_not_invent_summary() {
         let event = incoming_event_from_native_hook_json(&json!({
             "provider": "claude-code",
-            "directory": "/repo/clawhip",
+            "directory": "/repo/hermip",
             "event_name": "Stop"
         }))
         .expect("event");
@@ -1238,7 +1238,7 @@ mod tests {
     fn stop_event_respects_preexisting_summary_over_stop_context() {
         let event = incoming_event_from_native_hook_json(&json!({
             "provider": "claude-code",
-            "directory": "/repo/clawhip",
+            "directory": "/repo/hermip",
             "event_name": "Stop",
             "stop_context": {
                 "last_prompt_summary": "older prompt"

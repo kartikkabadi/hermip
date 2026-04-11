@@ -313,7 +313,7 @@ impl DiscordClient {
         };
 
         eprintln!(
-            "clawhip dlq bury: {}",
+            "hermip dlq bury: {}",
             serde_json::to_string(&entry)
                 .unwrap_or_else(|_| "{\"error\":\"dlq serialize failed\"}".to_string())
         );
@@ -493,7 +493,7 @@ mod tests {
         let server = tokio::spawn(serve_once(
             listener,
             "HTTP/1.1 200 OK",
-            r#"{"id":"1480171113253175356","name":"clawhip-dev","type":0}"#,
+            r#"{"id":"1480171113253175356","name":"hermip-dev","type":0}"#,
         ));
 
         let client =
@@ -504,7 +504,7 @@ mod tests {
         match lookup {
             ChannelLookup::Found { id, name } => {
                 assert_eq!(id, "1480171113253175356");
-                assert_eq!(name.as_deref(), Some("clawhip-dev"));
+                assert_eq!(name.as_deref(), Some("hermip-dev"));
             }
             other => panic!("expected Found, got {other:?}"),
         }
@@ -623,7 +623,7 @@ mod tests {
             event_kind: "github.ci-failed".into(),
             format: MessageFormat::Alert,
             content: "boom".into(),
-            payload: json!({"repo":"clawhip"}),
+            payload: json!({"repo":"hermip"}),
         };
         let error = client
             .send(
@@ -636,7 +636,7 @@ mod tests {
         server.await.unwrap();
         let dlq = client.dlq_entries();
         assert_eq!(dlq.len(), 1);
-        assert_eq!(dlq[0].payload["repo"], "clawhip");
+        assert_eq!(dlq[0].payload["repo"], "hermip");
         assert_eq!(dlq[0].retry_count, 3);
     }
 }

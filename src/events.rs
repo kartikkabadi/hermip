@@ -1375,17 +1375,17 @@ mod tests {
     #[test]
     fn template_context_backfills_repo_and_session_aliases() {
         let git_event = IncomingEvent::git_commit(
-            "clawhip".into(),
+            "hermip".into(),
             "main".into(),
             "1234567890abcdef".into(),
             "ship it".into(),
             None,
         );
         let git_context = git_event.template_context();
-        assert_eq!(git_context.get("repo").map(String::as_str), Some("clawhip"));
+        assert_eq!(git_context.get("repo").map(String::as_str), Some("hermip"));
         assert_eq!(
             git_context.get("repo_name").map(String::as_str),
-            Some("clawhip")
+            Some("hermip")
         );
         assert_eq!(
             git_context.get("event").map(String::as_str),
@@ -1728,24 +1728,24 @@ mod tests {
     fn renders_github_ci_failed_in_compact_and_alert_formats() {
         let event = IncomingEvent::github_ci(
             "github.ci-failed",
-            "clawhip".into(),
+            "hermip".into(),
             Some(58),
             "CI / test".into(),
             "completed".into(),
             Some("failure".into()),
             "abcdef1234567890".into(),
-            "https://github.com/Yeachan-Heo/clawhip/actions/runs/1".into(),
+            "https://github.com/Yeachan-Heo/hermip/actions/runs/1".into(),
             Some("feat/branch".into()),
             Some("alerts".into()),
         );
 
         assert_eq!(
             event.render_default(&MessageFormat::Compact).unwrap(),
-            "CI failed · clawhip#58 · CI / test · failure · abcdef1 · https://github.com/Yeachan-Heo/clawhip/actions/runs/1"
+            "CI failed · hermip#58 · CI / test · failure · abcdef1 · https://github.com/Yeachan-Heo/hermip/actions/runs/1"
         );
         assert_eq!(
             event.render_default(&MessageFormat::Alert).unwrap(),
-            "🚨 CI failed · clawhip#58 · CI / test · failure · abcdef1 · https://github.com/Yeachan-Heo/clawhip/actions/runs/1"
+            "🚨 CI failed · hermip#58 · CI / test · failure · abcdef1 · https://github.com/Yeachan-Heo/hermip/actions/runs/1"
         );
         assert_eq!(event.channel.as_deref(), Some("alerts"));
     }
@@ -1754,24 +1754,24 @@ mod tests {
     fn renders_github_ci_started_with_status_details() {
         let event = IncomingEvent::github_ci(
             "github.ci-started",
-            "clawhip".into(),
+            "hermip".into(),
             Some(58),
             "CI / test".into(),
             "in_progress".into(),
             None,
             "abcdef1234567890".into(),
-            "https://github.com/Yeachan-Heo/clawhip/actions/runs/1".into(),
+            "https://github.com/Yeachan-Heo/hermip/actions/runs/1".into(),
             None,
             None,
         );
 
         assert_eq!(
             event.render_default(&MessageFormat::Compact).unwrap(),
-            "CI started · clawhip#58 · CI / test · in_progress · abcdef1 · https://github.com/Yeachan-Heo/clawhip/actions/runs/1"
+            "CI started · hermip#58 · CI / test · in_progress · abcdef1 · https://github.com/Yeachan-Heo/hermip/actions/runs/1"
         );
         assert_eq!(
             event.render_default(&MessageFormat::Alert).unwrap(),
-            "🚨 CI started · clawhip#58 · CI / test · in_progress · abcdef1 · https://github.com/Yeachan-Heo/clawhip/actions/runs/1"
+            "🚨 CI started · hermip#58 · CI / test · in_progress · abcdef1 · https://github.com/Yeachan-Heo/hermip/actions/runs/1"
         );
     }
 
@@ -1786,7 +1786,7 @@ mod tests {
             payload: json!({
                 "agent_name": "omc",
                 "session_id": "issue-65",
-                "project": "clawhip",
+                "project": "hermip",
                 "elapsed_secs": 42
             }),
         });
@@ -1842,9 +1842,9 @@ mod tests {
                 "context": {
                     "normalized_event": "test-failed",
                     "session_name": "issue-65-native-event-contract-polish",
-                    "repo_name": "clawhip",
-                    "repo_path": "/repo/clawhip",
-                    "worktree_path": "/repo/clawhip-worktrees/issue-65",
+                    "repo_name": "hermip",
+                    "repo_path": "/repo/hermip",
+                    "worktree_path": "/repo/hermip-worktrees/issue-65",
                     "branch": "feat/issue-65-native-event-contract-polish",
                     "issue_number": 65,
                     "elapsed_secs": 42,
@@ -1859,7 +1859,7 @@ mod tests {
             event.payload["session_name"],
             json!("issue-65-native-event-contract-polish")
         );
-        assert_eq!(event.payload["repo_name"], json!("clawhip"));
+        assert_eq!(event.payload["repo_name"], json!("hermip"));
         assert_eq!(event.payload["issue_number"], json!(65));
         assert_eq!(event.payload["elapsed_secs"], json!(42));
         assert_eq!(event.payload["error_message"], json!("cargo test failed"));
@@ -1928,12 +1928,12 @@ mod tests {
                 "signal": {
                     "routeKey": "pull-request.created",
                     "phase": "finished",
-                    "summary": "https://github.com/Yeachan-Heo/clawhip/pull/67"
+                    "summary": "https://github.com/Yeachan-Heo/hermip/pull/67"
                 },
                 "context": {
                     "sessionId": "issue-65",
-                    "projectPath": "/repo/clawhip-worktrees/issue-65",
-                    "projectName": "clawhip"
+                    "projectPath": "/repo/hermip-worktrees/issue-65",
+                    "projectName": "hermip"
                 }
             }),
         });
@@ -1941,20 +1941,20 @@ mod tests {
         assert_eq!(event.kind, "session.pr-created");
         assert_eq!(event.payload["tool"], json!("omc"));
         assert_eq!(event.payload["session_id"], json!("issue-65"));
-        assert_eq!(event.payload["project"], json!("clawhip"));
-        assert_eq!(event.payload["repo_name"], json!("clawhip"));
+        assert_eq!(event.payload["project"], json!("hermip"));
+        assert_eq!(event.payload["repo_name"], json!("hermip"));
         assert_eq!(
             event.payload["repo_path"],
-            json!("/repo/clawhip-worktrees/issue-65")
+            json!("/repo/hermip-worktrees/issue-65")
         );
         assert_eq!(
             event.payload["worktree_path"],
-            json!("/repo/clawhip-worktrees/issue-65")
+            json!("/repo/hermip-worktrees/issue-65")
         );
         assert_eq!(event.payload["pr_number"], json!(67));
         assert_eq!(
             event.payload["pr_url"],
-            json!("https://github.com/Yeachan-Heo/clawhip/pull/67")
+            json!("https://github.com/Yeachan-Heo/hermip/pull/67")
         );
         assert_eq!(event.payload["status"], json!("finished"));
     }
@@ -1973,12 +1973,12 @@ mod tests {
                     "routeKey": "pull-request.created",
                     "toolName": "Bash",
                     "command": "gh pr create",
-                    "summary": "https://github.com/Yeachan-Heo/clawhip/pull/71"
+                    "summary": "https://github.com/Yeachan-Heo/hermip/pull/71"
                 },
                 "context": {
                     "sessionId": "issue-65",
-                    "projectPath": "/repo/clawhip",
-                    "projectName": "clawhip"
+                    "projectPath": "/repo/hermip",
+                    "projectName": "hermip"
                 }
             }),
         });
@@ -1986,15 +1986,15 @@ mod tests {
         assert_eq!(event.kind, "session.pr-created");
         assert_eq!(event.payload["tool"], json!("omc"));
         assert_eq!(event.payload["session_id"], json!("issue-65"));
-        assert_eq!(event.payload["project"], json!("clawhip"));
-        assert_eq!(event.payload["repo_name"], json!("clawhip"));
-        assert_eq!(event.payload["repo_path"], json!("/repo/clawhip"));
-        assert_eq!(event.payload["worktree_path"], json!("/repo/clawhip"));
+        assert_eq!(event.payload["project"], json!("hermip"));
+        assert_eq!(event.payload["repo_name"], json!("hermip"));
+        assert_eq!(event.payload["repo_path"], json!("/repo/hermip"));
+        assert_eq!(event.payload["worktree_path"], json!("/repo/hermip"));
         assert_eq!(event.payload["tool_name"], json!("Bash"));
         assert_eq!(event.payload["command"], json!("gh pr create"));
         assert_eq!(
             event.payload["summary"],
-            json!("https://github.com/Yeachan-Heo/clawhip/pull/71")
+            json!("https://github.com/Yeachan-Heo/hermip/pull/71")
         );
         assert_eq!(event.payload["pr_number"], json!(71));
     }
@@ -2012,19 +2012,19 @@ mod tests {
                 "signal": {
                     "routeKey": "pull-request.created",
                     "phase": "finished",
-                    "summary": "https://github.com/Yeachan-Heo/clawhip/pull/67"
+                    "summary": "https://github.com/Yeachan-Heo/hermip/pull/67"
                 },
                 "context": {
                     "sessionId": "issue-65",
-                    "projectPath": "/repo/clawhip-worktrees/issue-65",
-                    "projectName": "clawhip"
+                    "projectPath": "/repo/hermip-worktrees/issue-65",
+                    "projectName": "hermip"
                 }
             }),
         });
 
         assert_eq!(
             event.render_default(&MessageFormat::Compact).unwrap(),
-            "omc issue-65 pr-created (repo=clawhip, issue=#65, pr=#67, summary=https://github.com/Yeachan-Heo/clawhip/pull/67)"
+            "omc issue-65 pr-created (repo=hermip, issue=#65, pr=#67, summary=https://github.com/Yeachan-Heo/hermip/pull/67)"
         );
     }
 
@@ -2040,22 +2040,22 @@ mod tests {
                 "context": {
                     "normalized_event": "pr-created",
                     "session_name": "issue-65",
-                    "repo_name": "clawhip",
+                    "repo_name": "hermip",
                     "branch": "feat/issue-65-native-event-contract-polish",
                     "issue_number": 65,
                     "pr_number": 71,
-                    "pr_url": "https://github.com/Yeachan-Heo/clawhip/pull/71"
+                    "pr_url": "https://github.com/Yeachan-Heo/hermip/pull/71"
                 }
             }),
         });
 
         assert_eq!(
             event.render_default(&MessageFormat::Compact).unwrap(),
-            "omx issue-65 pr-created (repo=clawhip, issue=#65, pr=#71, branch=feat/issue-65-native-event-contract-polish)"
+            "omx issue-65 pr-created (repo=hermip, issue=#65, pr=#71, branch=feat/issue-65-native-event-contract-polish)"
         );
         assert_eq!(
             event.render_default(&MessageFormat::Inline).unwrap(),
-            "[omx issue-65] pr-created · clawhip · issue #65 · PR #71 · feat/issue-65-native-event-contract-polish"
+            "[omx issue-65] pr-created · hermip · issue #65 · PR #71 · feat/issue-65-native-event-contract-polish"
         );
     }
 

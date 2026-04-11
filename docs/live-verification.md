@@ -57,7 +57,7 @@ Operational flow:
 ### Provider-native Codex + Claude contract
 
 - shared event set: `SessionStart`, `PreToolUse`, `PostToolUse`, `UserPromptSubmit`, `Stop`
-- generic ingestion via `clawhip native hook --provider <codex|claude>`
+- generic ingestion via `hermip native hook --provider <codex|claude>`
 
 Operational flow:
 
@@ -69,7 +69,7 @@ printf '%s\n' '{
   "session_id": "sess-65",
   "cwd": "/repo/clawhip",
   "event": "SessionStart"
-}' | clawhip native hook --provider codex
+}' | hermip native hook --provider codex
 ```
 
 3. Confirm clawhip accepts it and renders a stable lifecycle message with project/repo context.
@@ -80,7 +80,7 @@ printf '%s\n' '{
   "session_id": "sess-65",
   "cwd": "/repo/clawhip",
   "event": "SessionStart"
-}' | clawhip native hook --provider claude
+}' | hermip native hook --provider claude
 ```
 
 5. Confirm both providers normalize into the same shared route family.

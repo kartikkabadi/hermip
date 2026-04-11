@@ -54,9 +54,9 @@ Shared v1 hook events:
 Local ingress for sample payloads and manual verification:
 
 ```bash
-clawhip native hook --provider codex --file payload.json
-clawhip native hook --provider claude --file payload.json
-cat payload.json | clawhip native hook --provider codex
+hermip native hook --provider codex --file payload.json
+hermip native hook --provider claude --file payload.json
+cat payload.json | hermip native hook --provider codex
 ```
 
 Recommended installation model:
@@ -455,7 +455,7 @@ Verification:
 ### 7. Provider-native session contract
 
 Canonical native routing now starts from provider-native Codex and Claude hook payloads and
-enters clawhip through `clawhip native hook`.
+enters clawhip through `hermip native hook`.
 
 Shared v1 hook events:
 - `SessionStart`
@@ -548,8 +548,8 @@ Verification:
 
 Preferred input:
 ```bash
-clawhip native hook --provider codex --file payload.json
-clawhip native hook --provider claude --file payload.json
+hermip native hook --provider codex --file payload.json
+hermip native hook --provider claude --file payload.json
 clawhip tmux list
 ```
 
@@ -581,7 +581,7 @@ clawhip deliver \
 
 Behavior:
 - Codex and Claude should own session launch and hook registration
-- `clawhip native hook` is the local thin-client ingress for provider payloads
+- `hermip native hook` is the local thin-client ingress for provider payloads
 - `tmux new` / `tmux watch` are fallback paths for debugging or manual recovery
 - `deliver` is the prompt recovery path for an already-running hooked tmux-backed provider session
 - `tmux list` shows active daemon-known watches with source, registration timestamp, and parent-process info
@@ -814,7 +814,7 @@ clawhip send ...        # thin client custom event
 clawhip github ...      # thin client GitHub event
 clawhip git ...         # thin client git event
 clawhip agent ...       # thin client agent lifecycle event
-clawhip native hook ... # provider-native hook thin client
+hermip native hook ... # provider-native hook thin client
 clawhip tmux ...        # thin client / wrapper surface
 clawhip plugin list     # list installed/bundled shell-hook plugins
 ```

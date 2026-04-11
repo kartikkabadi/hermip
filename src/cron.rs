@@ -529,7 +529,7 @@ fn load_scheduler_state(path: &Path) -> Result<CronSchedulerState> {
         Ok(state) => Ok(state),
         Err(error) => {
             eprintln!(
-                "clawhip cron state '{}' is invalid; ignoring persisted state: {error}",
+                "hermip cron state '{}' is invalid; ignoring persisted state: {error}",
                 path.display()
             );
             Ok(CronSchedulerState::default())

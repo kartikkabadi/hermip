@@ -267,7 +267,7 @@ pub async fn list_active_tmux_registrations(
             sync_active_config_registrations(config, registry, &available_sessions).await;
         }
         Err(error) => {
-            eprintln!("clawhip source tmux list-sessions failed: {error}");
+            eprintln!("hermip source tmux list-sessions failed: {error}");
         }
     }
 
@@ -284,7 +284,7 @@ async fn poll_tmux(
     let available_sessions = match list_tmux_sessions().await {
         Ok(sessions) => Some(sessions),
         Err(error) => {
-            eprintln!("clawhip source tmux list-sessions failed: {error}");
+            eprintln!("hermip source tmux list-sessions failed: {error}");
             None
         }
     };
@@ -342,7 +342,7 @@ async fn poll_tmux(
             }
             Err(error) => {
                 eprintln!(
-                    "clawhip source tmux has-session failed for {}: {error}",
+                    "hermip source tmux has-session failed for {}: {error}",
                     session_name
                 );
                 continue;
@@ -416,7 +416,7 @@ async fn poll_tmux(
                 }
             }
             Err(error) => eprintln!(
-                "clawhip source tmux snapshot failed for {}: {error}",
+                "hermip source tmux snapshot failed for {}: {error}",
                 session_name
             ),
         }
@@ -913,23 +913,23 @@ PR created #7",
     fn tmux_keyword_event_carries_registered_routing_metadata() {
         let mut registration = registration(vec!["error"]);
         registration.routing = RoutingMetadata {
-            project: Some("clawhip".into()),
-            repo_name: Some("clawhip".into()),
-            worktree_path: Some("/repo/clawhip.worktrees/issue-152".into()),
+            project: Some("hermip".into()),
+            repo_name: Some("hermip".into()),
+            worktree_path: Some("/repo/hermip.worktrees/issue-152".into()),
             ..RoutingMetadata::default()
         };
 
         let event = tmux_keyword_event(
             &registration,
-            "clawhip-issue-152".into(),
+            "hermip-issue-152".into(),
             vec![("error".into(), "boom".into())],
         );
 
-        assert_eq!(event.payload["project"], "clawhip");
-        assert_eq!(event.payload["repo_name"], "clawhip");
+        assert_eq!(event.payload["project"], "hermip");
+        assert_eq!(event.payload["repo_name"], "hermip");
         assert_eq!(
             event.payload["worktree_path"],
-            "/repo/clawhip.worktrees/issue-152"
+            "/repo/hermip.worktrees/issue-152"
         );
     }
 

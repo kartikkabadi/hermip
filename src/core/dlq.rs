@@ -46,9 +46,9 @@ mod tests {
             event_kind: "github.ci-failed".into(),
             format: "compact".into(),
             content: "msg".into(),
-            payload: json!({"repo":"clawhip"}),
+            payload: json!({"repo":"hermip"}),
         });
         assert_eq!(dlq.entries().len(), 1);
-        assert_eq!(dlq.entries()[0].payload["repo"], "clawhip");
+        assert_eq!(dlq.entries()[0].payload["repo"], "hermip");
     }
 }

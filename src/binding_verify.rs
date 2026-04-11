@@ -346,19 +346,19 @@ mod tests {
     #[test]
     fn collects_route_binding_with_filter() {
         let mut filter = BTreeMap::new();
-        filter.insert("repo".into(), "clawhip".into());
+        filter.insert("repo".into(), "hermip".into());
         let config = config_with_routes(vec![RouteRule {
             event: "*".into(),
             filter,
             channel: Some("222".into()),
-            channel_name: Some("clawhip-dev".into()),
+            channel_name: Some("hermip-dev".into()),
             ..RouteRule::default()
         }]);
         let bindings = collect_bindings(&config);
         assert_eq!(bindings.len(), 1);
         assert_eq!(bindings[0].channel_id, "222");
-        assert_eq!(bindings[0].expected_name.as_deref(), Some("clawhip-dev"));
-        assert!(bindings[0].label.contains("repo=clawhip"));
+        assert_eq!(bindings[0].expected_name.as_deref(), Some("hermip-dev"));
+        assert!(bindings[0].label.contains("repo=hermip"));
     }
 
     #[test]
@@ -418,9 +418,9 @@ mod tests {
     fn verdict_match_when_hint_matches() {
         let lookup = ChannelLookup::Found {
             id: "1".into(),
-            name: Some("clawhip-dev".into()),
+            name: Some("hermip-dev".into()),
         };
-        let verdict = resolve_verdict(lookup, &Some("clawhip-dev".into()));
+        let verdict = resolve_verdict(lookup, &Some("hermip-dev".into()));
         assert!(matches!(verdict, VerdictKind::Match { .. }));
     }
 
@@ -428,9 +428,9 @@ mod tests {
     fn verdict_match_case_insensitive() {
         let lookup = ChannelLookup::Found {
             id: "1".into(),
-            name: Some("Clawhip-Dev".into()),
+            name: Some("Hermip-Dev".into()),
         };
-        let verdict = resolve_verdict(lookup, &Some("clawhip-dev".into()));
+        let verdict = resolve_verdict(lookup, &Some("hermip-dev".into()));
         assert!(matches!(verdict, VerdictKind::Match { .. }));
     }
 
@@ -528,25 +528,25 @@ mod tests {
     fn apply_repo_binding_creates_route() {
         let mut config = AppConfig::default();
         config
-            .apply_repo_binding("clawhip", "123456", Some("clawhip-dev"))
+            .apply_repo_binding("hermip", "123456", Some("hermip-dev"))
             .unwrap();
         assert_eq!(config.routes.len(), 1);
         assert_eq!(config.routes[0].channel.as_deref(), Some("123456"));
         assert_eq!(
             config.routes[0].channel_name.as_deref(),
-            Some("clawhip-dev")
+            Some("hermip-dev")
         );
-        assert_eq!(config.routes[0].filter.get("repo").unwrap(), "clawhip");
+        assert_eq!(config.routes[0].filter.get("repo").unwrap(), "hermip");
     }
 
     #[test]
     fn apply_repo_binding_updates_existing() {
         let mut config = AppConfig::default();
         config
-            .apply_repo_binding("clawhip", "111", Some("old-name"))
+            .apply_repo_binding("hermip", "111", Some("old-name"))
             .unwrap();
         config
-            .apply_repo_binding("clawhip", "222", Some("new-name"))
+            .apply_repo_binding("hermip", "222", Some("new-name"))
             .unwrap();
         assert_eq!(config.routes.len(), 1);
         assert_eq!(config.routes[0].channel.as_deref(), Some("222"));

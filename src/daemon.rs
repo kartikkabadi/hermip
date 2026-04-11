@@ -46,7 +46,7 @@ pub async fn run(
 ) -> Result<()> {
     config.validate()?;
     let token_source = config.discord_token_source();
-    println!("clawhip v{VERSION} starting (token_source: {token_source})");
+    println!("hermip v{VERSION} starting (token_source: {token_source})");
 
     let mut sinks: HashMap<String, Box<dyn Sink>> = HashMap::new();
     sinks.insert(
@@ -71,7 +71,7 @@ pub async fn run(
             routine_batch_window,
         );
         if let Err(error) = dispatcher.run().await {
-            eprintln!("clawhip dispatcher stopped: {error}");
+            eprintln!("hermip dispatcher stopped: {error}");
         }
     });
     spawn_source(GitSource::new(config.clone()), tx.clone());
@@ -119,7 +119,7 @@ pub async fn run(
     let addr: SocketAddr = format!("{}:{}", config.daemon.bind_host, port).parse()?;
     let listener = tokio::net::TcpListener::bind(addr).await?;
     println!(
-        "clawhip daemon v{VERSION} listening on http://{} (token_source: {token_source})",
+        "hermip daemon v{VERSION} listening on http://{} (token_source: {token_source})",
         listener.local_addr()?
     );
     axum::serve(listener, app).await?;
@@ -132,15 +132,15 @@ where
 {
     let source_name = source.name().to_string();
     tokio::spawn(async move {
-        println!("clawhip source '{}' starting", source_name);
+        println!("hermip source '{}' starting", source_name);
         if let Err(error) = source.run(tx.clone()).await {
-            eprintln!("clawhip source '{}' stopped: {error}", source_name);
+            eprintln!("hermip source '{}' stopped: {error}", source_name);
             if let Err(alert_error) = tx
                 .send(source_failure_alert_event(&source_name, &error.to_string()))
                 .await
             {
                 eprintln!(
-                    "clawhip source '{}' could not enqueue degraded alert: {alert_error}",
+                    "hermip source '{}' could not enqueue degraded alert: {alert_error}",
                     source_name
                 );
             }
@@ -151,7 +151,7 @@ where
 fn source_failure_alert_event(source_name: &str, error_message: &str) -> IncomingEvent {
     let mut event = IncomingEvent::custom(
         None,
-        format!("clawhip degraded: source '{source_name}' stopped: {error_message}"),
+        format!("hermip degraded: source '{source_name}' stopped: {error_message}"),
     )
     .with_format(Some(MessageFormat::Alert));
 
@@ -656,11 +656,11 @@ mod tests {
         let payload = json!({
             "provider": "codex",
             "event_name": "SessionStart",
-            "directory": "/repo/clawhip",
-            "cwd": "/repo/clawhip",
+            "directory": "/repo/hermip",
+            "cwd": "/repo/hermip",
             "event_payload": {
                 "session_id": "sess-65",
-                "cwd": "/repo/clawhip"
+                "cwd": "/repo/hermip"
             }
         });
 
@@ -695,7 +695,7 @@ mod tests {
         let payload = json!({
             "provider": "claude-code",
             "event_name": "Notification",
-            "directory": "/repo/clawhip",
+            "directory": "/repo/hermip",
             "event_payload": {}
         });
 
@@ -795,7 +795,7 @@ mod tests {
         *pending.write().await = Some(update::PendingUpdate {
             current_version: "0.5.4".into(),
             latest_version: "0.6.0".into(),
-            release_url: "https://github.com/Yeachan-Heo/clawhip/releases/tag/v0.6.0".into(),
+            release_url: "https://github.com/Yeachan-Heo/hermip/releases/tag/v0.6.0".into(),
             detected_at: "2026-04-07T00:00:00Z".into(),
         });
 

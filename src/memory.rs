@@ -299,11 +299,11 @@ fn scaffold_files(layout: &MemoryLayout) -> Vec<(PathBuf, String)> {
         (layout.lessons_file(), render_lessons_file()),
         (
             layout.handoffs_dir().join(".gitkeep"),
-            String::from("# tracked by clawhip memory init\n"),
+            String::from("# tracked by hermip memory init\n"),
         ),
         (
             layout.archive_dir().join(".gitkeep"),
-            String::from("# tracked by clawhip memory init\n"),
+            String::from("# tracked by hermip memory init\n"),
         ),
     ];
 
@@ -478,7 +478,7 @@ fn render_daily_file(layout: &MemoryLayout) -> String {
         String::new(),
         "## Log".into(),
         String::new(),
-        "- Scaffold created with `clawhip memory init`.".into(),
+        "- Scaffold created with `hermip memory init`.".into(),
     ]);
     lines.join("\n") + "\n"
 }
@@ -681,7 +681,7 @@ mod tests {
         let tempdir = tempfile::tempdir().expect("tempdir");
         let layout = MemoryLayout {
             root: tempdir.path().to_path_buf(),
-            project_slug: "clawhip".into(),
+            project_slug: "hermip".into(),
             channel_slug: Some("alerts".into()),
             agent_slug: Some("codex".into()),
             today_slug: "2026-03-10".into(),
@@ -702,7 +702,7 @@ mod tests {
         assert!(layout.archive_dir().join(".gitkeep").is_file());
 
         let memory_md = fs::read_to_string(layout.memory_file()).expect("read MEMORY.md");
-        assert!(memory_md.contains("memory/projects/clawhip.md"));
+        assert!(memory_md.contains("memory/projects/hermip.md"));
         assert!(memory_md.contains("memory/channels/alerts.md"));
         assert!(memory_md.contains("memory/agents/codex.md"));
     }
@@ -712,7 +712,7 @@ mod tests {
         let tempdir = tempfile::tempdir().expect("tempdir");
         let layout = MemoryLayout {
             root: tempdir.path().to_path_buf(),
-            project_slug: "clawhip".into(),
+            project_slug: "hermip".into(),
             channel_slug: None,
             agent_slug: None,
             today_slug: "2026-03-10".into(),
@@ -735,7 +735,7 @@ mod tests {
         let tempdir = tempfile::tempdir().expect("tempdir");
         let layout = MemoryLayout {
             root: tempdir.path().to_path_buf(),
-            project_slug: "clawhip".into(),
+            project_slug: "hermip".into(),
             channel_slug: Some("alerts".into()),
             agent_slug: None,
             today_slug: "2026-03-10".into(),
@@ -759,8 +759,8 @@ mod tests {
     #[test]
     fn slugify_normalizes_common_inputs() {
         assert_eq!(
-            slugify("Clawhip Workspace").expect("slug"),
-            "clawhip-workspace"
+            slugify("Hermip Workspace").expect("slug"),
+            "hermip-workspace"
         );
         assert_eq!(
             slugify("issue_73/runtime").expect("slug"),

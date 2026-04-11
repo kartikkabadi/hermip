@@ -49,7 +49,7 @@ pub type Result<T> = std::result::Result<T, DynError>;
 #[tokio::main]
 async fn main() {
     if let Err(error) = real_main().await {
-        eprintln!("clawhip error: {error}");
+        eprintln!("hermip error: {error}");
         std::process::exit(1);
     }
 }
@@ -178,7 +178,7 @@ async fn real_main() -> Result<()> {
             None => lifecycle::update(restart),
             Some(UpdateCommands::Check) => {
                 let http = reqwest::Client::builder()
-                    .user_agent(format!("clawhip/{VERSION}"))
+                    .user_agent(format!("hermip/{VERSION}"))
                     .build()?;
                 match update::check_latest_version(&http).await {
                     Ok(Some((version, url))) => {
@@ -339,15 +339,15 @@ async fn send_incoming_event(client: &DaemonClient, event: IncomingEvent) -> Res
 /// Parse `--expect-name REPO=NAME` entries into a `repo -> name` map.
 ///
 /// **Hard-fails** on any malformed entry instead of silently skipping it, so
-/// a typo like `--expect-name clawhip` (missing `=`) cannot bypass the
+/// a typo like `--expect-name hermip` (missing `=`) cannot bypass the
 /// name-match guard during `setup --bind`. This is a correctness guarantee:
 /// when the operator asks us to enforce a name, we must either enforce it or
 /// refuse the command — never quietly drop the assertion.
 ///
 /// Rejects:
-/// - entries without `=` (`"clawhip"`)
+/// - entries without `=` (`"hermip"`)
 /// - empty repo (`"=dev"` or `"   =dev"`)
-/// - empty name (`"clawhip="` or `"clawhip=   "`)
+/// - empty name (`"hermip="` or `"hermip=   "`)
 /// - duplicate repo keys (prevents ambiguous overrides)
 fn parse_expect_name_overrides(
     entries: &[String],
@@ -399,7 +399,7 @@ async fn run_setup(args: SetupArgs, config_path: &std::path::Path) -> Result<()>
         let client = DiscordClient::from_config(Arc::new(editable.clone()))?;
 
         // Collect expected-name overrides (repo -> name). Hard-fails on
-        // malformed input so a typo like `--expect-name clawhip` cannot
+        // malformed input so a typo like `--expect-name hermip` cannot
         // silently bypass the name-match guard.
         let expect_map = parse_expect_name_overrides(&args.expect_name)?;
 
@@ -557,45 +557,45 @@ mod tests {
     #[test]
     fn parse_expect_name_overrides_accepts_well_formed_entries() {
         let entries = vec![
-            "clawhip=clawhip-dev".to_string(),
+            "hermip=hermip-dev".to_string(),
             "oh-my-codex=omx-dev".to_string(),
         ];
         let map = parse_expect_name_overrides(&entries).expect("valid entries");
-        assert_eq!(map.get("clawhip").map(String::as_str), Some("clawhip-dev"));
+        assert_eq!(map.get("hermip").map(String::as_str), Some("hermip-dev"));
         assert_eq!(map.get("oh-my-codex").map(String::as_str), Some("omx-dev"));
     }
 
     #[test]
     fn parse_expect_name_overrides_trims_whitespace() {
-        let entries = vec!["  clawhip  =  clawhip-dev  ".to_string()];
+        let entries = vec!["  hermip  =  hermip-dev  ".to_string()];
         let map = parse_expect_name_overrides(&entries).expect("trimmed entries");
-        assert_eq!(map.get("clawhip").map(String::as_str), Some("clawhip-dev"));
+        assert_eq!(map.get("hermip").map(String::as_str), Some("hermip-dev"));
     }
 
     #[test]
     fn parse_expect_name_overrides_rejects_missing_equals() {
         // Regression for #198 review: previously filter_map silently dropped
-        // malformed entries, so `--expect-name clawhip` bypassed the guard.
-        let entries = vec!["clawhip".to_string()];
+        // malformed entries, so `--expect-name hermip` bypassed the guard.
+        let entries = vec!["hermip".to_string()];
         let error = parse_expect_name_overrides(&entries).expect_err("missing = must hard-fail");
         let msg = error.to_string();
         assert!(
             msg.contains("--expect-name must be REPO=NAME"),
             "unexpected error: {msg}"
         );
-        assert!(msg.contains("'clawhip'"), "error should quote entry: {msg}");
+        assert!(msg.contains("'hermip'"), "error should quote entry: {msg}");
     }
 
     #[test]
     fn parse_expect_name_overrides_rejects_empty_repo() {
-        let entries = vec!["=clawhip-dev".to_string()];
+        let entries = vec!["=hermip-dev".to_string()];
         let error = parse_expect_name_overrides(&entries).expect_err("empty repo must hard-fail");
         assert!(error.to_string().contains("empty repo name"));
     }
 
     #[test]
     fn parse_expect_name_overrides_rejects_whitespace_only_repo() {
-        let entries = vec!["   =clawhip-dev".to_string()];
+        let entries = vec!["   =hermip-dev".to_string()];
         let error =
             parse_expect_name_overrides(&entries).expect_err("whitespace repo must hard-fail");
         assert!(error.to_string().contains("empty repo name"));
@@ -603,14 +603,14 @@ mod tests {
 
     #[test]
     fn parse_expect_name_overrides_rejects_empty_name() {
-        let entries = vec!["clawhip=".to_string()];
+        let entries = vec!["hermip=".to_string()];
         let error = parse_expect_name_overrides(&entries).expect_err("empty name must hard-fail");
         assert!(error.to_string().contains("empty channel name"));
     }
 
     #[test]
     fn parse_expect_name_overrides_rejects_whitespace_only_name() {
-        let entries = vec!["clawhip=   ".to_string()];
+        let entries = vec!["hermip=   ".to_string()];
         let error =
             parse_expect_name_overrides(&entries).expect_err("whitespace name must hard-fail");
         assert!(error.to_string().contains("empty channel name"));
@@ -619,15 +619,15 @@ mod tests {
     #[test]
     fn parse_expect_name_overrides_rejects_duplicate_repo() {
         let entries = vec![
-            "clawhip=clawhip-dev".to_string(),
-            "clawhip=omc-dev".to_string(),
+            "hermip=hermip-dev".to_string(),
+            "hermip=omc-dev".to_string(),
         ];
         let error =
             parse_expect_name_overrides(&entries).expect_err("duplicate repo must hard-fail");
         assert!(
             error
                 .to_string()
-                .contains("duplicate entries for repo 'clawhip'")
+                .contains("duplicate entries for repo 'hermip'")
         );
     }
 

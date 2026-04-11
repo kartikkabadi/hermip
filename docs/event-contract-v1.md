@@ -26,8 +26,8 @@ Provider-specific extras are out of scope for v1.
 The public local ingress for shared provider-native payloads is:
 
 ```bash
-clawhip native hook --provider codex --file payload.json
-clawhip native hook --provider claude --file payload.json
+hermip native hook --provider codex --file payload.json
+hermip native hook --provider claude --file payload.json
 ```
 
 ## Frozen base fields

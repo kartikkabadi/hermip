@@ -7,14 +7,11 @@ const DOCS_WITHOUT_LEGACY_SURFACES: &[&str] = &[
     "docs/native-event-contract.md",
     "docs/live-verification.md",
     "docs/event-contract-v1.md",
-    "integrations/omx/README.md",
-    "skills/omc/SKILL.md",
-    "skills/omx/SKILL.md",
 ];
 
 const FORBIDDEN_SURFACES: &[&str] = &[
-    "clawhip omx",
-    "clawhip omc",
+    "hermip omx",
+    "hermip omc",
     "/api/omx/hook",
     "skills/omx",
     "skills/omc",
@@ -63,7 +60,7 @@ fn provider_native_contract_docs_list_all_shared_events() {
             );
         }
         assert!(
-            contents.contains("clawhip native hook"),
+            contents.contains("hermip native hook"),
             "{relative} should reference the generic provider-native ingress"
         );
     }

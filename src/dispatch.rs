@@ -121,7 +121,7 @@ impl Dispatcher {
             Ok(deliveries) => deliveries,
             Err(error) => {
                 eprintln!(
-                    "clawhip dispatcher failed to resolve {}: {error}",
+                    "hermip dispatcher failed to resolve {}: {error}",
                     event.canonical_kind()
                 );
                 return;
@@ -138,7 +138,7 @@ impl Dispatcher {
             Ok(deliveries) => deliveries,
             Err(error) => {
                 eprintln!(
-                    "clawhip dispatcher failed to resolve {}: {error}",
+                    "hermip dispatcher failed to resolve {}: {error}",
                     event.canonical_kind()
                 );
                 return;
@@ -166,7 +166,7 @@ impl Dispatcher {
     async fn send_delivery(&self, event: &IncomingEvent, delivery: &ResolvedDelivery) {
         let Some(sink) = self.sinks.get(delivery.sink.as_str()) else {
             eprintln!(
-                "clawhip dispatcher missing sink '{}' for target {:?}",
+                "hermip dispatcher missing sink '{}' for target {:?}",
                 delivery.sink, delivery.target
             );
             return;
@@ -180,7 +180,7 @@ impl Dispatcher {
             Ok(content) => content,
             Err(error) => {
                 eprintln!(
-                    "clawhip dispatcher failed to render {} for {}/ {:?}: {error}",
+                    "hermip dispatcher failed to render {} for {}/ {:?}: {error}",
                     event.canonical_kind(),
                     delivery.sink,
                     delivery.target
@@ -213,7 +213,7 @@ impl Dispatcher {
 
         let Some(sink) = self.sinks.get(first.delivery.sink.as_str()) else {
             eprintln!(
-                "clawhip dispatcher missing sink '{}' for batched target {:?}",
+                "hermip dispatcher missing sink '{}' for batched target {:?}",
                 first.delivery.sink, first.delivery.target
             );
             return;
@@ -233,7 +233,7 @@ impl Dispatcher {
                 }
                 Err(error) => {
                     eprintln!(
-                        "clawhip dispatcher failed to render batched {} for {}/ {:?}: {error}",
+                        "hermip dispatcher failed to render batched {} for {}/ {:?}: {error}",
                         item.event.canonical_kind(),
                         item.delivery.sink,
                         item.delivery.target
@@ -266,7 +266,7 @@ impl Dispatcher {
     async fn send_sink_message(&self, sink: &dyn Sink, target: &SinkTarget, message: SinkMessage) {
         if let Err(error) = sink.send(target, &message).await {
             eprintln!(
-                "clawhip dispatcher delivery failed to {:?}: {error}",
+                "hermip dispatcher delivery failed to {:?}: {error}",
                 target
             );
         }
@@ -981,13 +981,13 @@ mod tests {
         for workflow in ["Build", "Test"] {
             let mut event = IncomingEvent::github_ci(
                 "github.ci-passed",
-                "clawhip".into(),
+                "hermip".into(),
                 Some(85),
                 workflow.into(),
                 "completed".into(),
                 Some("success".into()),
                 "abcdef1234567".into(),
-                format!("https://github.com/Yeachan-Heo/clawhip/actions/runs/123/jobs/{workflow}"),
+                format!("https://github.com/Yeachan-Heo/hermip/actions/runs/123/jobs/{workflow}"),
                 Some("feat/retry".into()),
                 None,
             );
@@ -1150,7 +1150,7 @@ mod tests {
         tx.send(IncomingEvent::agent_failed(
             "codex".into(),
             Some("session-1".into()),
-            Some("clawhip".into()),
+            Some("hermip".into()),
             Some(3),
             Some("boom".into()),
             "stacktrace".into(),
@@ -1219,13 +1219,13 @@ mod tests {
         for workflow in ["Build", "Test"] {
             let mut event = IncomingEvent::github_ci(
                 "github.ci-passed",
-                "clawhip".into(),
+                "hermip".into(),
                 Some(122),
                 workflow.into(),
                 "completed".into(),
                 Some("success".into()),
                 "abcdef1234567".into(),
-                format!("https://github.com/Yeachan-Heo/clawhip/actions/runs/456/jobs/{workflow}"),
+                format!("https://github.com/Yeachan-Heo/hermip/actions/runs/456/jobs/{workflow}"),
                 Some("feat/routine-batch".into()),
                 None,
             );
@@ -1343,7 +1343,7 @@ mod tests {
         .await
         .unwrap();
         tx.send(IncomingEvent::git_commit(
-            "clawhip".into(),
+            "hermip".into(),
             "main".into(),
             "1234567890abcdef".into(),
             "ship it".into(),
@@ -1369,19 +1369,19 @@ mod tests {
                 || second.contains("tmux:issue-132 matched 'error' => boom")
         );
         assert!(
-            first.contains("git:clawhip@main 1234567 ship it")
-                || second.contains("git:clawhip@main 1234567 ship it")
+            first.contains("git:hermip@main 1234567 ship it")
+                || second.contains("git:hermip@main 1234567 ship it")
         );
         assert!(
             (first.contains("tmux:issue-132 matched 'error' => boom")
-                && !first.contains("git:clawhip@main 1234567 ship it"))
+                && !first.contains("git:hermip@main 1234567 ship it"))
                 || (second.contains("tmux:issue-132 matched 'error' => boom")
-                    && !second.contains("git:clawhip@main 1234567 ship it"))
+                    && !second.contains("git:hermip@main 1234567 ship it"))
         );
         assert!(
-            (first.contains("git:clawhip@main 1234567 ship it")
+            (first.contains("git:hermip@main 1234567 ship it")
                 && !first.contains("tmux:issue-132 matched 'error' => boom"))
-                || (second.contains("git:clawhip@main 1234567 ship it")
+                || (second.contains("git:hermip@main 1234567 ship it")
                     && !second.contains("tmux:issue-132 matched 'error' => boom"))
         );
     }
@@ -1389,12 +1389,12 @@ mod tests {
     #[test]
     fn batch_key_prefers_workflow_run_id() {
         let payload = json!({
-            "repo": "clawhip",
+            "repo": "hermip",
             "number": 86,
             "sha": "abc",
             "url": "https://github.com/org/repo/actions/runs/123456789/jobs/42"
         });
-        assert_eq!(ci_batch_key(&payload), "clawhip:86:abc:123456789");
+        assert_eq!(ci_batch_key(&payload), "hermip:86:abc:123456789");
     }
 
     #[test]
@@ -1419,7 +1419,7 @@ mod tests {
 
         let mut first = IncomingEvent::github_ci(
             "github.ci-started",
-            "clawhip".into(),
+            "hermip".into(),
             Some(86),
             "Build".into(),
             "in_progress".into(),
@@ -1435,7 +1435,7 @@ mod tests {
 
         let mut second = IncomingEvent::github_ci(
             "github.ci-passed",
-            "clawhip".into(),
+            "hermip".into(),
             Some(86),
             "Build".into(),
             "completed".into(),
@@ -1451,7 +1451,7 @@ mod tests {
 
         let mut third = IncomingEvent::github_ci(
             "github.ci-failed",
-            "clawhip".into(),
+            "hermip".into(),
             Some(86),
             "Test".into(),
             "completed".into(),
