@@ -40,7 +40,12 @@ None — this worker uses standard tools (code editing, shell commands, Rust too
    - Error cases produce helpful messages
    - Record each manual check in the handoff
 
-9. **Commit your work** — Stage and commit all changes with a descriptive message.
+9. **Commit your work** — IMPORTANT: Make small, frequent commits. Every logical change gets its own commit with a conventional commit message (feat, fix, refactor, test, docs, chore). Push after each commit. Do NOT bundle many changes into one big commit. Examples of good commit granularity:
+   - `feat: add hermes session event types`
+   - `refactor: rename clawhip → hermip in dispatcher`
+   - `test: add droid event source unit tests`
+   - `chore: update Cargo.toml dependencies`
+   Push after each commit with `git push origin main`.
 
 ## Example Handoff
 
