@@ -18,7 +18,9 @@ use crate::cron::CronSource;
 use crate::dispatch::Dispatcher;
 use crate::event::compat::from_incoming_event;
 use crate::events::{IncomingEvent, MessageFormat, normalize_event};
-use crate::native_hooks::incoming_event_from_native_hook_json;
+use crate::native_hooks::{
+    NATIVE_NON_GIT_OUTCOME, NATIVE_NORMALIZATION_OUTCOME_FIELD, incoming_event_from_native_hook_json,
+};
 use crate::render::{DefaultRenderer, Renderer};
 use crate::router::Router;
 use crate::sink::{DiscordSink, Sink, SlackSink};
@@ -214,6 +216,24 @@ async fn post_native_hook(
                 .into_response();
         }
     };
+
+    if event
+        .payload
+        .get(NATIVE_NORMALIZATION_OUTCOME_FIELD)
+        .and_then(Value::as_str)
+        == Some(NATIVE_NON_GIT_OUTCOME)
+    {
+        return (
+            StatusCode::ACCEPTED,
+            Json(json!({
+                "ok": true,
+                "dropped": true,
+                "reason": NATIVE_NON_GIT_OUTCOME,
+                "type": event.kind,
+            })),
+        )
+            .into_response();
+    }
 
     accept_event(&state, event).await
 }

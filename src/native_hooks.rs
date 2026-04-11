@@ -26,6 +26,17 @@ pub const SHARED_HOOK_EVENTS: [&str; 5] = [
     "Stop",
 ];
 
+pub const NATIVE_NORMALIZATION_OUTCOME_FIELD: &str = "normalization_outcome";
+pub const NATIVE_NON_GIT_OUTCOME: &str = "non_git";
+pub const NATIVE_GIT_OUTCOME: &str = "git";
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct RoutingContext {
+    repo_path: String,
+    worktree_path: String,
+    repo_name: String,
+}
+
 pub fn incoming_event_from_native_hook_json(
     payload: &Value,
 ) -> Result<crate::events::IncomingEvent> {
@@ -61,37 +72,24 @@ pub fn incoming_event_from_native_hook_json(
             "/worktree_path",
         ],
     );
-    let worktree_path = first_string(payload, &["/worktree_path", "/context/worktree_path"])
-        .or_else(|| directory.clone());
-    let repo_path = first_string(payload, &["/repo_path", "/context/repo_path"]).or_else(|| {
-        worktree_path
-            .as_deref()
-            .and_then(infer_repo_root)
-            .map(|path| path.to_string_lossy().into_owned())
-    });
-    let project_metadata = load_effective_project_metadata(
-        payload,
-        repo_path.as_deref(),
-        worktree_path.as_deref().or(directory.as_deref()),
+    let directory = directory.map(|value| canonicalize_or_normalize_path(&value));
+    let explicit_worktree_path = first_string(payload, &["/worktree_path", "/context/worktree_path"]);
+    let explicit_repo_path = first_string(payload, &["/repo_path", "/context/repo_path"]);
+    let routing_context = resolve_routing_context(
+        directory.as_deref(),
+        explicit_worktree_path.as_deref(),
+        explicit_repo_path.as_deref(),
     );
+    let project_metadata = payload.get("project_metadata").cloned();
 
     let repo_name = first_string(
         payload,
         &[
             "/repo_name",
             "/context/repo_name",
-            "/project",
-            "/project_name",
-            "/projectName",
         ],
     )
-    .or_else(|| project_metadata_string(&project_metadata, &["repo_name", "repo", "name"]))
-    .or_else(|| {
-        repo_path
-            .as_deref()
-            .or(worktree_path.as_deref())
-            .and_then(path_basename)
-    });
+    .or_else(|| routing_context.as_ref().map(|context| context.repo_name.clone()));
     let project_name = first_string(
         payload,
         &[
@@ -172,15 +170,22 @@ pub fn incoming_event_from_native_hook_json(
     );
     normalized.insert("event_payload".into(), event_payload);
     normalized.insert("payload".into(), payload.clone());
+    normalized.insert(
+        NATIVE_NORMALIZATION_OUTCOME_FIELD.into(),
+        json!(if routing_context.is_some() {
+            NATIVE_GIT_OUTCOME
+        } else {
+            NATIVE_NON_GIT_OUTCOME
+        }),
+    );
+    normalized.insert("routeable".into(), json!(routing_context.is_some()));
 
     if let Some(directory) = directory {
         normalized.insert("directory".into(), json!(directory));
     }
-    if let Some(worktree_path) = worktree_path {
-        normalized.insert("worktree_path".into(), json!(worktree_path));
-    }
-    if let Some(repo_path) = repo_path {
-        normalized.insert("repo_path".into(), json!(repo_path));
+    if let Some(routing_context) = routing_context.as_ref() {
+        normalized.insert("worktree_path".into(), json!(routing_context.worktree_path));
+        normalized.insert("repo_path".into(), json!(routing_context.repo_path));
     }
     if let Some(repo_name) = repo_name {
         normalized.insert("repo_name".into(), json!(repo_name));
@@ -366,18 +371,16 @@ function runGit(args, cwd) {
   return '';
 }
 
-function loadProjectMetadata(root) {
-  const path = join(root, '.clawhip', 'project.json');
-  if (!existsSync(path)) return null;
-  return parseJson(readFileSync(path, 'utf8'), null);
-}
-
 function inferRepoRoot(cwd) {
   const commonDir = runGit(['rev-parse', '--path-format=absolute', '--git-common-dir'], cwd);
   if (commonDir) {
     return dirname(commonDir);
   }
-  return runGit(['rev-parse', '--show-toplevel'], cwd) || cwd;
+  return runGit(['rev-parse', '--show-toplevel'], cwd);
+}
+
+function inferWorktreeRoot(cwd) {
+  return runGit(['rev-parse', '--show-toplevel'], cwd);
 }
 
 function parseIntegerish(value) {
@@ -539,7 +542,7 @@ function truncate(text, maxLen = 200) {
   return trimmed.length <= maxLen ? trimmed : trimmed.slice(0, maxLen) + '…';
 }
 
-function maybeWritePromptSubmitState(repoRoot, provider, eventName, input) {
+function maybeWritePromptSubmitState(worktreeRoot, provider, eventName, input) {
   const normalizedEvent = String(eventName || '').trim().toLowerCase();
   if (
     normalizedEvent !== 'userpromptsubmit' &&
@@ -551,8 +554,9 @@ function maybeWritePromptSubmitState(repoRoot, provider, eventName, input) {
   }
 
   try {
+    if (!worktreeRoot) return;
     const promptText = input.prompt || input.user_prompt || input.message || '';
-    const path = join(repoRoot, '.clawhip', 'state', 'prompt-submit.json');
+    const path = join(worktreeRoot, '.clawhip', 'state', 'prompt-submit.json');
     mkdirSync(dirname(path), { recursive: true });
     writeFileSync(path, JSON.stringify({
       observed_at: new Date().toISOString(),
@@ -565,13 +569,14 @@ function maybeWritePromptSubmitState(repoRoot, provider, eventName, input) {
   } catch {}
 }
 
-function maybeEnrichStopEvent(repoRoot, payload, eventName) {
+function maybeEnrichStopEvent(worktreeRoot, payload, eventName) {
   const normalizedEvent = String(eventName || '').trim().toLowerCase();
   if (normalizedEvent !== 'stop' && normalizedEvent !== 'sessionstop' && normalizedEvent !== 'session-stopped') {
     return;
   }
   try {
-    const path = join(repoRoot, '.clawhip', 'state', 'prompt-submit.json');
+    if (!worktreeRoot) return;
+    const path = join(worktreeRoot, '.clawhip', 'state', 'prompt-submit.json');
     if (!existsSync(path)) return;
     const raw = readFileSync(path, 'utf8');
     const state = parseJson(raw, null);
@@ -589,8 +594,8 @@ async function main() {
   const cwd = process.cwd();
   const raw = await readStdin();
   const input = parseJson(raw, {});
-  const repoRoot = inferRepoRoot(cwd);
-  const projectMetadata = loadProjectMetadata(repoRoot) || loadProjectMetadata(input.cwd || cwd);
+  const worktreeRoot = inferWorktreeRoot(input.cwd || cwd);
+  const repoRoot = worktreeRoot ? inferRepoRoot(worktreeRoot) : '';
   const tmuxMetadata = collectTmuxMetadata(input, cwd);
   const eventName =
     input.hook_event_name || input.hookEventName || input.event_name || input.event || 'unknown';
@@ -598,9 +603,6 @@ async function main() {
     provider,
     source: provider,
     directory: input.cwd || cwd,
-    repo_path: repoRoot,
-    worktree_path: input.cwd || cwd,
-    repo_name: basename(repoRoot),
     event_name: eventName,
     hook_event_name: eventName,
     session_id: input.session_id || input.sessionId,
@@ -613,31 +615,31 @@ async function main() {
     prompt: input.prompt,
     event_payload: input,
   };
+  if (worktreeRoot) {
+    payload.worktree_path = worktreeRoot;
+  }
+  if (repoRoot) {
+    payload.repo_path = repoRoot;
+  }
+  if (repoRoot || worktreeRoot) {
+    payload.repo_name = basename(repoRoot || worktreeRoot);
+    payload.normalization_outcome = 'git';
+    payload.routeable = true;
+  } else {
+    payload.normalization_outcome = 'non_git';
+    payload.routeable = false;
+  }
   if (tmuxMetadata) {
     Object.assign(payload, tmuxMetadata);
   }
 
-  if (projectMetadata && typeof projectMetadata === 'object') {
-    payload.project_metadata = projectMetadata;
-    if (projectMetadata.name) {
-      payload.project = projectMetadata.name;
-      payload.project_name = projectMetadata.name;
-    }
-    if (projectMetadata.id) {
-      payload.project_id = projectMetadata.id;
-    }
-    if (projectMetadata.repo_name) {
-      payload.repo_name = projectMetadata.repo_name;
-    }
-  }
-
-  const augmentation = await collectAugmentation(repoRoot, payload);
+  const augmentation = await collectAugmentation(worktreeRoot || input.cwd || cwd, payload);
   if (augmentation) {
     payload.augmentation = augmentation;
   }
 
-  maybeWritePromptSubmitState(repoRoot, provider, eventName, input);
-  maybeEnrichStopEvent(repoRoot, payload, eventName);
+  maybeWritePromptSubmitState(worktreeRoot, provider, eventName, input);
+  maybeEnrichStopEvent(worktreeRoot, payload, eventName);
 
   const result = spawnSync('clawhip', ['native', 'hook', '--provider', provider], {
     input: JSON.stringify(payload),
@@ -708,24 +710,6 @@ fn normalized_event_label(kind: &str) -> &str {
     }
 }
 
-fn load_effective_project_metadata(
-    payload: &Value,
-    repo_path: Option<&str>,
-    worktree_path: Option<&str>,
-) -> Option<Value> {
-    payload
-        .get("project_metadata")
-        .cloned()
-        .or_else(|| repo_path.and_then(load_project_metadata_file))
-        .or_else(|| worktree_path.and_then(load_project_metadata_file))
-}
-
-fn load_project_metadata_file(root: &str) -> Option<Value> {
-    let path = Path::new(root).join(CLAWHIP_PROJECT_FILE);
-    let raw = fs::read_to_string(path).ok()?;
-    serde_json::from_str::<Value>(&raw).ok()
-}
-
 fn project_metadata_string(project_metadata: &Option<Value>, keys: &[&str]) -> Option<String> {
     let metadata = project_metadata.as_ref()?.as_object()?;
     keys.iter().find_map(|key| {
@@ -736,6 +720,76 @@ fn project_metadata_string(project_metadata: &Option<Value>, keys: &[&str]) -> O
             .filter(|value| !value.is_empty())
             .map(ToString::to_string)
     })
+}
+
+fn resolve_routing_context(
+    directory: Option<&str>,
+    explicit_worktree_path: Option<&str>,
+    explicit_repo_path: Option<&str>,
+) -> Option<RoutingContext> {
+    let worktree_candidate = explicit_worktree_path
+        .or(directory)
+        .map(canonicalize_or_normalize_path)
+        .filter(|path| !path.is_empty())?;
+    let repo_candidate = explicit_repo_path
+        .map(canonicalize_or_normalize_path)
+        .filter(|path| !path.is_empty());
+
+    if Path::new(&worktree_candidate).exists() {
+        let worktree_root = infer_worktree_root(&worktree_candidate)?;
+        let repo_root = repo_candidate
+            .or_else(|| infer_repo_root(&worktree_root).map(pathbuf_to_string))
+            .unwrap_or_else(|| worktree_root.clone());
+        return Some(RoutingContext {
+            repo_name: path_basename(&repo_root)
+                .or_else(|| path_basename(&worktree_root))
+                .unwrap_or_else(|| "unknown".to_string()),
+            repo_path: repo_root,
+            worktree_path: worktree_root,
+        });
+    }
+
+    let repo_path = repo_candidate.unwrap_or_else(|| worktree_candidate.clone());
+    Some(RoutingContext {
+        repo_name: path_basename(&repo_path)
+            .or_else(|| path_basename(&worktree_candidate))
+            .unwrap_or_else(|| "unknown".to_string()),
+        repo_path,
+        worktree_path: worktree_candidate,
+    })
+}
+
+fn canonicalize_or_normalize_path(path: &str) -> String {
+    let trimmed = path.trim();
+    if trimmed.is_empty() {
+        return String::new();
+    }
+    let path = Path::new(trimmed);
+    path.canonicalize()
+        .unwrap_or_else(|_| path.to_path_buf())
+        .to_string_lossy()
+        .into_owned()
+}
+
+fn pathbuf_to_string(path: PathBuf) -> String {
+    path.to_string_lossy().into_owned()
+}
+
+fn infer_worktree_root(directory: &str) -> Option<String> {
+    let output = Command::new("git")
+        .args(["-C", directory, "rev-parse", "--show-toplevel"])
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let root = String::from_utf8(output.stdout).ok()?;
+    let trimmed = root.trim();
+    if trimmed.is_empty() {
+        None
+    } else {
+        Some(canonicalize_or_normalize_path(trimmed))
+    }
 }
 
 fn infer_repo_root(directory: &str) -> Option<PathBuf> {
@@ -778,7 +832,8 @@ fn infer_repo_root(directory: &str) -> Option<PathBuf> {
     if trimmed.is_empty() {
         None
     } else {
-        Some(PathBuf::from(trimmed))
+        let path = PathBuf::from(trimmed);
+        Some(path.canonicalize().unwrap_or(path))
     }
 }
 
