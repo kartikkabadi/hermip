@@ -1,3 +1,4 @@
+#[cfg(any(feature = "codex-hook", feature = "claude-hook"))]
 #[allow(dead_code)]
 pub mod prompt_deliver;
 
@@ -5,13 +6,18 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use anyhow::anyhow;
-use serde_json::{Map, Value, json};
+use serde_json::json;
+#[cfg(any(feature = "codex-hook", feature = "claude-hook"))]
+use serde_json::{Map, Value};
 
 use crate::Result;
 use crate::cli::{HookInstallScope, HookProvider, HooksInstallArgs, HooksUninstallArgs};
+#[cfg(feature = "claude-hook")]
+use crate::native_hooks::CLAUDE_SETTINGS_FILE;
+#[cfg(feature = "codex-hook")]
+use crate::native_hooks::CODEX_HOOKS_FILE;
 use crate::native_hooks::{
-    CLAUDE_SETTINGS_FILE, CODEX_HOOKS_FILE, HERMES_PLUGIN_DIR, HERMIP_PROJECT_FILE, HOOK_SCRIPT,
-    SHARED_HOOK_EVENTS, generated_hook_script,
+    HERMES_PLUGIN_DIR, HERMIP_PROJECT_FILE, HOOK_SCRIPT, SHARED_HOOK_EVENTS, generated_hook_script,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -64,6 +70,7 @@ fn run_uninstall(args: &HooksUninstallArgs) -> Result<UninstallReport> {
 
     for provider in providers {
         match provider {
+            #[cfg(feature = "codex-hook")]
             HookProvider::Codex => {
                 let path = root.join(CODEX_HOOKS_FILE);
                 if path.exists() {
@@ -71,6 +78,7 @@ fn run_uninstall(args: &HooksUninstallArgs) -> Result<UninstallReport> {
                     removed_files.push(path);
                 }
             }
+            #[cfg(feature = "claude-hook")]
             HookProvider::ClaudeCode => {
                 let path = root.join(CLAUDE_SETTINGS_FILE);
                 if path.exists() {
@@ -149,16 +157,37 @@ fn resolve_uninstall_root(args: &HooksUninstallArgs) -> Result<PathBuf> {
 
 fn selected_uninstall_providers(args: &HooksUninstallArgs) -> Vec<HookProvider> {
     if args.all || args.provider.is_empty() {
-        vec![
-            HookProvider::Codex,
-            HookProvider::ClaudeCode,
-            HookProvider::Hermes,
-        ]
+        default_uninstall_providers()
     } else {
         args.provider.clone()
     }
 }
 
+#[cfg(all(feature = "codex-hook", not(feature = "claude-hook")))]
+fn default_uninstall_providers() -> Vec<HookProvider> {
+    vec![HookProvider::Codex, HookProvider::Hermes]
+}
+
+#[cfg(all(not(feature = "codex-hook"), feature = "claude-hook"))]
+fn default_uninstall_providers() -> Vec<HookProvider> {
+    vec![HookProvider::ClaudeCode, HookProvider::Hermes]
+}
+
+#[cfg(all(feature = "codex-hook", feature = "claude-hook"))]
+fn default_uninstall_providers() -> Vec<HookProvider> {
+    vec![
+        HookProvider::Codex,
+        HookProvider::ClaudeCode,
+        HookProvider::Hermes,
+    ]
+}
+
+#[cfg(all(not(feature = "codex-hook"), not(feature = "claude-hook")))]
+fn default_uninstall_providers() -> Vec<HookProvider> {
+    vec![HookProvider::Hermes]
+}
+
+#[cfg(any(feature = "codex-hook", feature = "claude-hook"))]
 fn remove_hermip_hooks_from_file(path: &Path) -> Result<()> {
     let content = fs::read_to_string(path)?;
     let mut document: Map<String, Value> =
@@ -214,7 +243,9 @@ fn run_install(args: &HooksInstallArgs) -> Result<InstallReport> {
 
     for provider in providers {
         let path = match provider {
+            #[cfg(feature = "codex-hook")]
             HookProvider::Codex => write_codex_hooks(&root, &hook_script_path)?,
+            #[cfg(feature = "claude-hook")]
             HookProvider::ClaudeCode => write_claude_settings(&root, &hook_script_path)?,
             HookProvider::Hermes => write_hermes_plugin(&root, &hook_script_path)?,
         };
@@ -510,12 +541,33 @@ fn resolve_install_root(args: &HooksInstallArgs) -> Result<PathBuf> {
 
 fn selected_providers(args: &HooksInstallArgs) -> Vec<HookProvider> {
     if args.all || args.provider.is_empty() {
-        vec![HookProvider::Codex, HookProvider::ClaudeCode]
+        default_install_providers()
     } else {
         args.provider.clone()
     }
 }
 
+#[cfg(all(feature = "codex-hook", not(feature = "claude-hook")))]
+fn default_install_providers() -> Vec<HookProvider> {
+    vec![HookProvider::Codex]
+}
+
+#[cfg(all(not(feature = "codex-hook"), feature = "claude-hook"))]
+fn default_install_providers() -> Vec<HookProvider> {
+    vec![HookProvider::ClaudeCode]
+}
+
+#[cfg(all(feature = "codex-hook", feature = "claude-hook"))]
+fn default_install_providers() -> Vec<HookProvider> {
+    vec![HookProvider::Codex, HookProvider::ClaudeCode]
+}
+
+#[cfg(all(not(feature = "codex-hook"), not(feature = "claude-hook")))]
+fn default_install_providers() -> Vec<HookProvider> {
+    vec![]
+}
+
+#[cfg(feature = "codex-hook")]
 fn write_codex_hooks(root: &Path, hook_script_path: &Path) -> Result<PathBuf> {
     let path = root.join(CODEX_HOOKS_FILE);
     let mut document = read_json_object(&path)?;
@@ -530,6 +582,7 @@ fn write_codex_hooks(root: &Path, hook_script_path: &Path) -> Result<PathBuf> {
     Ok(path)
 }
 
+#[cfg(feature = "claude-hook")]
 fn write_claude_settings(root: &Path, hook_script_path: &Path) -> Result<PathBuf> {
     let path = root.join(CLAUDE_SETTINGS_FILE);
     let mut document = read_json_object(&path)?;
@@ -544,6 +597,7 @@ fn write_claude_settings(root: &Path, hook_script_path: &Path) -> Result<PathBuf
     Ok(path)
 }
 
+#[cfg(feature = "codex-hook")]
 fn codex_matcher_for(event: &str) -> Option<&'static str> {
     match event {
         "PreToolUse" | "PostToolUse" => Some(".*"),
@@ -551,6 +605,7 @@ fn codex_matcher_for(event: &str) -> Option<&'static str> {
     }
 }
 
+#[cfg(feature = "claude-hook")]
 fn claude_matcher_for(event: &str) -> Option<&'static str> {
     match event {
         "PreToolUse" | "PostToolUse" => Some(".*"),
@@ -558,6 +613,7 @@ fn claude_matcher_for(event: &str) -> Option<&'static str> {
     }
 }
 
+#[cfg(any(feature = "codex-hook", feature = "claude-hook"))]
 fn hook_command(hook_script_path: &Path, provider: HookProvider) -> String {
     format!(
         "node {} --provider {}",
@@ -566,6 +622,7 @@ fn hook_command(hook_script_path: &Path, provider: HookProvider) -> String {
     )
 }
 
+#[cfg(any(feature = "codex-hook", feature = "claude-hook"))]
 fn upsert_hook_event(
     hooks: &mut Map<String, Value>,
     event: &str,
@@ -607,6 +664,7 @@ fn upsert_hook_event(
     groups.push(Value::Object(group));
 }
 
+#[cfg(any(feature = "codex-hook", feature = "claude-hook"))]
 fn matcher_matches(group: &Value, matcher: Option<&str>) -> bool {
     match (group.get("matcher").and_then(Value::as_str), matcher) {
         (None, None) => true,
@@ -615,6 +673,7 @@ fn matcher_matches(group: &Value, matcher: Option<&str>) -> bool {
     }
 }
 
+#[cfg(any(feature = "codex-hook", feature = "claude-hook"))]
 fn ensure_group_hooks(group: &mut Value) -> &mut Vec<Value> {
     let object = group.as_object_mut().expect("hook event group object");
     object
@@ -624,6 +683,7 @@ fn ensure_group_hooks(group: &mut Value) -> &mut Vec<Value> {
         .expect("hooks array")
 }
 
+#[cfg(any(feature = "codex-hook", feature = "claude-hook"))]
 fn hook_command_matches(hook: &Value, command: &str) -> bool {
     hook.get("type").and_then(Value::as_str) == Some("command")
         && hook.get("command").and_then(Value::as_str) == Some(command)
@@ -663,6 +723,7 @@ fn write_generated_file(path: &Path, content: &str, force: bool) -> Result<()> {
     Ok(())
 }
 
+#[cfg(any(feature = "codex-hook", feature = "claude-hook"))]
 fn read_json_object(path: &Path) -> Result<Map<String, Value>> {
     if !path.exists() {
         return Ok(Map::new());
@@ -676,6 +737,7 @@ fn read_json_object(path: &Path) -> Result<Map<String, Value>> {
         .ok_or_else(|| anyhow!("{} must contain a JSON object", path.display()).into())
 }
 
+#[cfg(any(feature = "codex-hook", feature = "claude-hook"))]
 fn ensure_child_object<'a>(
     object: &'a mut Map<String, Value>,
     key: &str,
@@ -688,6 +750,7 @@ fn ensure_child_object<'a>(
         .ok_or_else(|| anyhow!("{key} must be a JSON object").into())
 }
 
+#[cfg(any(feature = "codex-hook", feature = "claude-hook"))]
 fn write_json(path: &Path, value: Value) -> Result<()> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
@@ -696,6 +759,7 @@ fn write_json(path: &Path, value: Value) -> Result<()> {
     Ok(())
 }
 
+#[cfg(any(feature = "codex-hook", feature = "claude-hook"))]
 fn shell_escape(value: &str) -> String {
     if value.is_empty() {
         return "''".to_string();
@@ -720,9 +784,11 @@ fn set_executable(path: &Path) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
+    #![allow(unused_imports)]
     use super::*;
     use tempfile::tempdir;
 
+    #[cfg(all(feature = "codex-hook", feature = "claude-hook"))]
     #[test]
     fn install_project_scope_writes_generic_provider_files() {
         let dir = tempdir().expect("tempdir");
@@ -759,6 +825,7 @@ mod tests {
         );
     }
 
+    #[cfg(feature = "codex-hook")]
     #[test]
     fn codex_install_writes_shared_events() {
         let dir = tempdir().expect("tempdir");
@@ -770,6 +837,7 @@ mod tests {
         }
     }
 
+    #[cfg(feature = "claude-hook")]
     #[test]
     fn claude_install_writes_shared_events() {
         let dir = tempdir().expect("tempdir");

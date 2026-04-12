@@ -14,7 +14,9 @@ pub const HOOK_SCRIPT: &str = ".hermip/hooks/native-hook.mjs";
 pub const PROJECT_METADATA_RELATIVE_PATH: &str = HERMIP_PROJECT_FILE;
 #[allow(dead_code)]
 pub const NATIVE_HOOK_SCRIPT_RELATIVE_PATH: &str = HOOK_SCRIPT;
+#[cfg(feature = "codex-hook")]
 pub const CODEX_HOOKS_FILE: &str = ".codex/hooks.json";
+#[cfg(feature = "claude-hook")]
 pub const CLAUDE_SETTINGS_FILE: &str = ".claude/settings.json";
 #[allow(dead_code)]
 pub const HERMES_PLUGIN_DIR: &str = ".hermes/plugins/hermip";
@@ -339,9 +341,12 @@ pub fn incoming_event_from_native_hook_json(
 
 #[allow(dead_code)]
 pub fn native_hooks_installed(workdir: &Path) -> bool {
-    workdir.join(HOOK_SCRIPT).is_file()
-        || workdir.join(CLAUDE_SETTINGS_FILE).is_file()
-        || workdir.join(CODEX_HOOKS_FILE).is_file()
+    let result = workdir.join(HOOK_SCRIPT).is_file();
+    #[cfg(feature = "claude-hook")]
+    let result = result || workdir.join(CLAUDE_SETTINGS_FILE).is_file();
+    #[cfg(feature = "codex-hook")]
+    let result = result || workdir.join(CODEX_HOOKS_FILE).is_file();
+    result
 }
 
 pub fn generated_hook_script() -> &'static str {
@@ -1115,6 +1120,7 @@ mod tests {
         assert_eq!(event.payload["tmux_client_count"], json!(3));
     }
 
+    #[cfg(feature = "codex-hook")]
     #[test]
     fn native_hooks_installed_accepts_codex_hooks_json() {
         let dir = tempdir().expect("tempdir");
@@ -1125,6 +1131,7 @@ mod tests {
         assert!(native_hooks_installed(dir.path()));
     }
 
+    #[cfg(feature = "codex-hook")]
     #[test]
     fn native_hooks_installed_rejects_codex_config_toml_alone() {
         let dir = tempdir().expect("tempdir");

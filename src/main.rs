@@ -75,6 +75,7 @@ async fn real_main() -> Result<()> {
             println!("{}", serde_json::to_string_pretty(&health)?);
             Ok(())
         }
+        #[cfg(any(feature = "codex-hook", feature = "claude-hook"))]
         Commands::Deliver(args) => crate::hooks::prompt_deliver::run(args).await,
         Commands::Emit(args) => {
             let client = DaemonClient::from_config(config.as_ref());

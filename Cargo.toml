@@ -21,6 +21,12 @@ time = { version = "0.3", features = ["formatting"] }
 uuid = { version = "1", features = ["v4"] }
 toml = "0.8"
 
+[features]
+default = ["hermes", "codex-hook", "claude-hook"]
+hermes = []
+codex-hook = []
+claude-hook = []
+
 [dev-dependencies]
 tempfile = "3.15"
 

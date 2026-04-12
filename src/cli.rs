@@ -8,6 +8,7 @@ use crate::events::MessageFormat;
 
 pub const DEFAULT_RETRY_ENTER_COUNT: u32 = 4;
 pub const DEFAULT_RETRY_ENTER_DELAY_MS: u64 = 250;
+#[cfg(any(feature = "codex-hook", feature = "claude-hook"))]
 pub const DEFAULT_DELIVER_MAX_ENTERS: u32 = crate::hooks::prompt_deliver::DEFAULT_MAX_ENTERS;
 
 #[derive(Debug, Parser)]
@@ -67,6 +68,7 @@ pub enum Commands {
         message: Option<String>,
     },
     /// Deliver a prompt into an existing hooked tmux-backed Codex/Claude session (including OMC/OMX wrappers).
+    #[cfg(any(feature = "codex-hook", feature = "claude-hook"))]
     Deliver(DeliverArgs),
     /// Emit an arbitrary event to the local daemon.
     Emit(EmitArgs),
@@ -143,7 +145,12 @@ pub enum Commands {
         #[command(subcommand)]
         command: MemoryCommands,
     },
-    /// Install and manage provider-native hook forwarding for Codex and Claude Code.
+    /// Install and manage provider-native hook forwarding for Codex, Claude Code, and Hermes.
+    ///
+    /// Available providers depend on compile-time feature flags:
+    /// - `hermes` (always available)
+    /// - `codex` (requires `codex-hook` feature)
+    /// - `claude-code` (requires `claude-hook` feature)
     Hooks {
         #[command(subcommand)]
         command: HooksCommands,
@@ -180,6 +187,7 @@ pub enum DaemonCommands {
     Status,
 }
 
+#[cfg(any(feature = "codex-hook", feature = "claude-hook"))]
 #[derive(Debug, Clone, Args)]
 pub struct DeliverArgs {
     /// Existing tmux session name to target.
@@ -670,7 +678,9 @@ pub struct MemoryStatusArgs {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
 pub enum HookProvider {
+    #[cfg(feature = "codex-hook")]
     Codex,
+    #[cfg(feature = "claude-hook")]
     #[value(name = "claude-code", alias = "claude")]
     ClaudeCode,
     #[value(name = "hermes", alias = "hermes-agent")]
@@ -678,9 +688,12 @@ pub enum HookProvider {
 }
 
 impl HookProvider {
+    #[allow(dead_code)]
     pub fn as_str(self) -> &'static str {
         match self {
+            #[cfg(feature = "codex-hook")]
             Self::Codex => "codex",
+            #[cfg(feature = "claude-hook")]
             Self::ClaudeCode => "claude-code",
             Self::Hermes => "hermes",
         }
@@ -695,7 +708,7 @@ pub enum HookInstallScope {
 
 #[derive(Debug, Clone, Subcommand)]
 pub enum HooksCommands {
-    /// Install provider-native hook forwarding for Codex and/or Claude Code.
+    /// Install provider-native hook forwarding for enabled providers (codex, claude-code, hermes).
     Install(HooksInstallArgs),
     /// Uninstall provider-native hook forwarding.
     Uninstall(HooksUninstallArgs),
@@ -806,6 +819,7 @@ mod tests {
         assert_eq!(event.payload["elapsed_secs"], Value::from(17));
     }
 
+    #[cfg(any(feature = "codex-hook", feature = "claude-hook"))]
     #[test]
     fn parses_deliver_subcommand() {
         let cli = Cli::parse_from([
@@ -1414,6 +1428,7 @@ mod tests {
         assert!(skip_star_prompt);
     }
 
+    #[cfg(all(feature = "codex-hook", feature = "claude-hook"))]
     #[test]
     fn parses_hooks_install_subcommand() {
         let cli = Cli::parse_from([
@@ -1465,6 +1480,7 @@ mod tests {
         }
     }
 
+    #[cfg(feature = "claude-hook")]
     #[test]
     fn parses_hooks_install_with_global_scope_and_force() {
         let cli = Cli::parse_from([

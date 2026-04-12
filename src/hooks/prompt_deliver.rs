@@ -67,14 +67,18 @@ pub struct DeliveryResult {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ProviderKind {
+    #[cfg(feature = "claude-hook")]
     Omc,
+    #[cfg(feature = "codex-hook")]
     Omx,
 }
 
 impl ProviderKind {
     fn label(self) -> &'static str {
         match self {
+            #[cfg(feature = "claude-hook")]
             Self::Omc => "claude-code",
+            #[cfg(feature = "codex-hook")]
             Self::Omx => "codex",
         }
     }
@@ -214,14 +218,17 @@ fn detect_hook_setup(cwd: &Path) -> Result<HookSetup> {
         let mut sources = Vec::new();
         let has_native_script = has_native_prompt_submit_hook_script(directory);
 
+        #[cfg(feature = "claude-hook")]
         if has_claude_prompt_submit_hook(directory) && has_native_script {
             providers.push(ProviderKind::Omc);
             sources.push(".claude/settings.json + .hermip/hooks/native-hook.mjs");
         }
+        #[cfg(feature = "codex-hook")]
         if has_codex_prompt_submit_hook(directory) && has_native_script {
             providers.push(ProviderKind::Omx);
             sources.push(".codex/hooks.json + .hermip/hooks/native-hook.mjs");
         }
+        #[cfg(feature = "codex-hook")]
         if has_omx_prompt_submit_hook(directory) && !providers.contains(&ProviderKind::Omx) {
             providers.push(ProviderKind::Omx);
             sources.push(".omx/hooks/hermip.mjs");
@@ -244,6 +251,7 @@ fn detect_hook_setup(cwd: &Path) -> Result<HookSetup> {
     .into())
 }
 
+#[cfg(feature = "claude-hook")]
 fn has_claude_prompt_submit_hook(root: &Path) -> bool {
     let path = root.join(".claude/settings.json");
     let Ok(content) = fs::read_to_string(path) else {
@@ -258,6 +266,7 @@ fn has_claude_prompt_submit_hook(root: &Path) -> bool {
         .is_some_and(|entries| entries.iter().any(json_hook_entry_mentions_hermip))
 }
 
+#[cfg(any(feature = "codex-hook", feature = "claude-hook"))]
 fn json_hook_entry_mentions_hermip(entry: &serde_json::Value) -> bool {
     entry
         .get("hooks")
@@ -271,10 +280,12 @@ fn json_hook_entry_mentions_hermip(entry: &serde_json::Value) -> bool {
         })
 }
 
+#[cfg(feature = "codex-hook")]
 fn has_codex_prompt_submit_hook(root: &Path) -> bool {
     has_codex_prompt_submit_hook_json(root) || has_codex_prompt_submit_hook_toml(root)
 }
 
+#[cfg(feature = "codex-hook")]
 fn has_codex_prompt_submit_hook_json(root: &Path) -> bool {
     let path = root.join(".codex/hooks.json");
     let Ok(content) = fs::read_to_string(path) else {
@@ -289,6 +300,7 @@ fn has_codex_prompt_submit_hook_json(root: &Path) -> bool {
         .is_some_and(|entries| entries.iter().any(json_hook_entry_mentions_hermip))
 }
 
+#[cfg(feature = "codex-hook")]
 fn has_codex_prompt_submit_hook_toml(root: &Path) -> bool {
     let path = root.join(".codex/config.toml");
     let Ok(content) = fs::read_to_string(path) else {
@@ -313,6 +325,7 @@ fn has_native_prompt_submit_hook_script(root: &Path) -> bool {
     content.contains("prompt-submit.json") || content.contains("maybeWritePromptSubmitState")
 }
 
+#[cfg(feature = "codex-hook")]
 fn has_omx_prompt_submit_hook(root: &Path) -> bool {
     let path = root.join(".omx/hooks/hermip.mjs");
     let Ok(content) = fs::read_to_string(path) else {
@@ -321,6 +334,7 @@ fn has_omx_prompt_submit_hook(root: &Path) -> bool {
     content.contains("prompt-submit.json") || content.contains("prompt_submit_recorded")
 }
 
+#[cfg(any(feature = "codex-hook", feature = "claude-hook"))]
 fn command_mentions_hermip(command: &str) -> bool {
     let normalized = command.trim().to_ascii_lowercase();
     normalized.contains("hermip native hook")
@@ -365,7 +379,9 @@ async fn detect_active_provider(pane: &PaneTarget, hook_setup: &HookSetup) -> Re
 
 fn provider_matches_command(provider: ProviderKind, command: &str) -> bool {
     let aliases = match provider {
+        #[cfg(feature = "claude-hook")]
         ProviderKind::Omc => ["omc", "claude", "claude-code", "openclaw"].as_slice(),
+        #[cfg(feature = "codex-hook")]
         ProviderKind::Omx => ["omx", "codex", "oh-my-codex"].as_slice(),
     };
 
@@ -596,6 +612,7 @@ mod tests {
         assert_eq!(config.verify_delay, Duration::from_millis(350));
     }
 
+    #[cfg(feature = "codex-hook")]
     #[test]
     fn detect_hook_setup_walks_to_parent_workdir() {
         let tempdir = tempdir().expect("tempdir");
@@ -620,6 +637,7 @@ mod tests {
         assert_eq!(setup.supported_providers, vec![ProviderKind::Omx]);
     }
 
+    #[cfg(feature = "claude-hook")]
     #[test]
     fn detect_hook_setup_recognizes_omc_user_prompt_submit_hooks() {
         let tempdir = tempdir().expect("tempdir");
@@ -641,6 +659,7 @@ mod tests {
         assert_eq!(setup.supported_providers, vec![ProviderKind::Omc]);
     }
 
+    #[cfg(feature = "codex-hook")]
     #[test]
     fn detect_hook_setup_rejects_old_omx_bridge_without_prompt_submit_support() {
         let tempdir = tempdir().expect("tempdir");
@@ -668,6 +687,7 @@ mod tests {
         assert_eq!(parsed.args, "/usr/bin/codex --sandbox workspace-write");
     }
 
+    #[cfg(feature = "claude-hook")]
     #[test]
     fn process_tree_matches_provider_detects_wrapped_omc_processes() {
         let processes = vec![ProcessInfo {
@@ -678,12 +698,14 @@ mod tests {
         }];
 
         assert!(process_tree_matches_provider(&processes, ProviderKind::Omc));
+        #[cfg(feature = "codex-hook")]
         assert!(!process_tree_matches_provider(
             &processes,
             ProviderKind::Omx
         ));
     }
 
+    #[cfg(feature = "codex-hook")]
     #[tokio::test]
     async fn deliver_retries_enter_until_prompt_submit_marker_changes() {
         let tempdir = tempdir().expect("tempdir");
