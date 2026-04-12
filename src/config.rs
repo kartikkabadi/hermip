@@ -18,11 +18,7 @@ fn env_var_or_fallback(primary: &str, fallback: &str) -> Option<String> {
     env::var(primary)
         .ok()
         .filter(|v| !v.trim().is_empty())
-        .or_else(|| {
-            env::var(fallback)
-                .ok()
-                .filter(|v| !v.trim().is_empty())
-        })
+        .or_else(|| env::var(fallback).ok().filter(|v| !v.trim().is_empty()))
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -631,7 +627,7 @@ impl AppConfig {
     /// env-var reader. Uses the same pattern as `effective_token_with()` and
     /// `discord_token_source_with()` to enable unit testing without setting
     /// real environment variables.
-    fn apply_hermip_env_overrides_with<F>(&mut self, mut get_env: F)
+    pub fn apply_hermip_env_overrides_with<F>(&mut self, mut get_env: F)
     where
         F: FnMut(&str) -> Option<String>,
     {
@@ -1460,12 +1456,10 @@ mod tests {
         let config = AppConfig::default();
 
         // When both HERMIP_ and CLAWHIP_ are set, HERMIP_ wins.
-        let token = config.effective_token_with(|name| {
-            match name {
-                "HERMIP_DISCORD_BOT_TOKEN" => Some("hermip-token".to_string()),
-                "CLAWHIP_DISCORD_BOT_TOKEN" => Some("legacy-token".to_string()),
-                _ => None,
-            }
+        let token = config.effective_token_with(|name| match name {
+            "HERMIP_DISCORD_BOT_TOKEN" => Some("hermip-token".to_string()),
+            "CLAWHIP_DISCORD_BOT_TOKEN" => Some("legacy-token".to_string()),
+            _ => None,
         });
         assert_eq!(token.as_deref(), Some("hermip-token"));
     }
@@ -3186,6 +3180,37 @@ token = "toml-bot-token"
             config.providers.discord.bot_token.as_deref(),
             Some("env-token"),
             "env should override loaded TOML token"
+        );
+    }
+
+    // --- Individual HERMIP_* env var tests ---
+
+    #[test]
+    fn hermip_daemon_port_overrides_toml() {
+        let mut config = config_with_toml_values();
+        config.daemon.port = 25294;
+
+        config.apply_hermip_env_overrides_with(|name| {
+            (name == "HERMIP_DAEMON_PORT").then(|| "40999".to_string())
+        });
+
+        assert_eq!(
+            config.daemon.port, 40999,
+            "HERMIP_DAEMON_PORT should override TOML"
+        );
+    }
+
+    #[test]
+    fn hermip_daemon_port_rejects_invalid_values() {
+        let mut config = config_with_toml_values();
+
+        config.apply_hermip_env_overrides_with(|name| {
+            (name == "HERMIP_DAEMON_PORT").then(|| "invalid".to_string())
+        });
+
+        assert_eq!(
+            config.daemon.port, 25294,
+            "Invalid port should not override"
         );
     }
 }
