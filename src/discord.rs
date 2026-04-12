@@ -641,4 +641,45 @@ mod tests {
         assert_eq!(dlq[0].payload["repo"], "hermip");
         assert_eq!(dlq[0].retry_count, 3);
     }
+
+    #[test]
+    fn discord_api_base_url_uses_hermip() {
+        // VAL-ENV-006: Discord sink uses HERMIP_DISCORD_API_BASE as primary base URL.
+        let previous = std::env::var_os("HERMIP_DISCORD_API_BASE");
+        unsafe {
+            std::env::remove_var("HERMIP_DISCORD_API_BASE");
+        }
+        // Default when unset.
+        let client = DiscordClient::from_config(Arc::new(AppConfig::default())).unwrap();
+        assert_eq!(client.api_base, "https://discord.com/api/v10");
+
+        // When HERMIP_DISCORD_API_BASE is set, it is used.
+        unsafe {
+            std::env::set_var(
+                "HERMIP_DISCORD_API_BASE",
+                "https://custom.discord.local/api",
+            );
+        }
+        let client = DiscordClient::from_config(Arc::new(AppConfig::default())).unwrap();
+        assert_eq!(client.api_base, "https://custom.discord.local/api");
+        unsafe {
+            std::env::remove_var("HERMIP_DISCORD_API_BASE");
+        }
+
+        // When HERMIP_DISCORD_API_BASE is empty/whitespace, falls back to default.
+        unsafe {
+            std::env::set_var("HERMIP_DISCORD_API_BASE", "  ");
+        }
+        let client = DiscordClient::from_config(Arc::new(AppConfig::default())).unwrap();
+        assert_eq!(client.api_base, "https://discord.com/api/v10");
+
+        // Restore original env var.
+        unsafe {
+            if let Some(prev) = previous {
+                std::env::set_var("HERMIP_DISCORD_API_BASE", prev);
+            } else {
+                std::env::remove_var("HERMIP_DISCORD_API_BASE");
+            }
+        }
+    }
 }

@@ -12,12 +12,6 @@ pub const HERMIP_PROJECT_FILE: &str = ".hermip/project.json";
 pub const HOOK_SCRIPT: &str = ".hermip/hooks/native-hook.mjs";
 #[allow(dead_code)]
 pub const PROJECT_METADATA_RELATIVE_PATH: &str = HERMIP_PROJECT_FILE;
-/// Legacy constant names preserved for backward compatibility.
-/// New code should use [`HERMIP_DIR`] and [`HERMIP_PROJECT_FILE`].
-#[allow(dead_code)]
-pub const CLAWHIP_DIR: &str = HERMIP_DIR;
-#[allow(dead_code)]
-pub const CLAWHIP_PROJECT_FILE: &str = HERMIP_PROJECT_FILE;
 #[allow(dead_code)]
 pub const NATIVE_HOOK_SCRIPT_RELATIVE_PATH: &str = HOOK_SCRIPT;
 pub const CODEX_HOOKS_FILE: &str = ".codex/hooks.json";
@@ -598,7 +592,7 @@ function maybeEnrichStopEvent(repoRoot, payload, eventName) {
 }
 
 async function main() {
-  const provider = arg('--provider') || process.env.HERMIP_PROVIDER || process.env.CLAWHIP_PROVIDER || 'unknown';
+  const provider = arg('--provider') || process.env.HERMIP_PROVIDER || 'unknown';
   const cwd = process.cwd();
   const raw = await readStdin();
   const input = parseJson(raw, {});

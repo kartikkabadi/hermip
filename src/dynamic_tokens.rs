@@ -187,4 +187,39 @@ mod tests {
         .await;
         assert!(rendered.contains("two\nthree") || rendered.contains("two\r\nthree"));
     }
+
+    #[test]
+    fn dynamic_tokens_hermip_tmux_bin() {
+        // VAL-ENV-003: Dynamic token expressions use HERMIP_TMUX_BIN.
+        let previous = std::env::var_os("HERMIP_TMUX_BIN");
+        unsafe {
+            std::env::remove_var("HERMIP_TMUX_BIN");
+        }
+        // Default when unset.
+        assert_eq!(tmux_bin(), "tmux");
+
+        // When HERMIP_TMUX_BIN is set to a non-empty value, it is used.
+        unsafe {
+            std::env::set_var("HERMIP_TMUX_BIN", "/opt/bin/tmux");
+        }
+        assert_eq!(tmux_bin(), "/opt/bin/tmux");
+        unsafe {
+            std::env::remove_var("HERMIP_TMUX_BIN");
+        }
+
+        // When HERMIP_TMUX_BIN is set to empty/whitespace, falls back to "tmux".
+        unsafe {
+            std::env::set_var("HERMIP_TMUX_BIN", "  ");
+        }
+        assert_eq!(tmux_bin(), "tmux");
+
+        // Restore original env var.
+        unsafe {
+            if let Some(prev) = previous {
+                std::env::set_var("HERMIP_TMUX_BIN", prev);
+            } else {
+                std::env::remove_var("HERMIP_TMUX_BIN");
+            }
+        }
+    }
 }

@@ -754,4 +754,39 @@ mod tests {
     fn path_str(path: &Path) -> &str {
         path.to_str().unwrap()
     }
+
+    #[test]
+    fn git_monitor_uses_hermip_git_bin() {
+        // VAL-ENV-004: HERMIP_GIT_BIN is the primary env var for the git binary.
+        let previous = std::env::var_os("HERMIP_GIT_BIN");
+        unsafe {
+            std::env::remove_var("HERMIP_GIT_BIN");
+        }
+        // Default when unset.
+        assert_eq!(git_bin(), "git");
+
+        // When HERMIP_GIT_BIN is set to a non-empty value, it is used.
+        unsafe {
+            std::env::set_var("HERMIP_GIT_BIN", "/usr/local/bin/git");
+        }
+        assert_eq!(git_bin(), "/usr/local/bin/git");
+        unsafe {
+            std::env::remove_var("HERMIP_GIT_BIN");
+        }
+
+        // When HERMIP_GIT_BIN is set to empty/whitespace, falls back to "git".
+        unsafe {
+            std::env::set_var("HERMIP_GIT_BIN", "  ");
+        }
+        assert_eq!(git_bin(), "git");
+
+        // Restore original env var.
+        unsafe {
+            if let Some(prev) = previous {
+                std::env::set_var("HERMIP_GIT_BIN", prev);
+            } else {
+                std::env::remove_var("HERMIP_GIT_BIN");
+            }
+        }
+    }
 }

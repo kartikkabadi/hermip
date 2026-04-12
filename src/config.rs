@@ -11,14 +11,10 @@ use crate::Result;
 use crate::events::MessageFormat;
 use crate::source::workspace::{default_workspace_debounce_ms, default_workspace_watch_dirs};
 
-/// Check a primary env var first, falling back to a legacy name.
-/// Returns `Some(value)` if either is set and non-empty, preferring the primary.
-/// Returns `None` if neither is set.
-fn env_var_or_fallback(primary: &str, fallback: &str) -> Option<String> {
-    env::var(primary)
-        .ok()
-        .filter(|v| !v.trim().is_empty())
-        .or_else(|| env::var(fallback).ok().filter(|v| !v.trim().is_empty()))
+/// Check an env var, returning `Some(value)` if set and non-empty.
+/// Returns `None` if the var is unset or empty.
+fn env_var_non_empty(name: &str) -> Option<String> {
+    env::var(name).ok().filter(|v| !v.trim().is_empty())
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -506,10 +502,7 @@ pub fn default_sink_name() -> String {
     "discord".to_string()
 }
 
-const DISCORD_TOKEN_ENV_VARS: [&str; 2] = [
-    "DISCORD_TOKEN",
-    "HERMIP_DISCORD_BOT_TOKEN",
-];
+const DISCORD_TOKEN_ENV_VARS: [&str; 2] = ["DISCORD_TOKEN", "HERMIP_DISCORD_BOT_TOKEN"];
 pub const CONFIG_EDITOR_MENU_ITEMS: [&str; 8] = [
     "Set Discord bot token",
     "Set daemon base URL",
@@ -1173,15 +1166,11 @@ impl AppConfig {
     }
 
     pub fn daemon_base_url(&self) -> String {
-        env_var_or_fallback("HERMIP_DAEMON_URL", "CLAWHIP_DAEMON_URL")
-            .filter(|value| !value.trim().is_empty())
-            .unwrap_or_else(|| self.daemon.base_url.clone())
+        env_var_non_empty("HERMIP_DAEMON_URL").unwrap_or_else(|| self.daemon.base_url.clone())
     }
 
     pub fn monitor_github_token(&self) -> Option<String> {
-        env_var_or_fallback("HERMIP_GITHUB_TOKEN", "CLAWHIP_GITHUB_TOKEN")
-            .filter(|value| !value.trim().is_empty())
-            .or_else(|| self.monitors.github_token.clone())
+        env_var_non_empty("HERMIP_GITHUB_TOKEN").or_else(|| self.monitors.github_token.clone())
     }
 
     pub fn run_interactive_editor(&mut self, path: &Path) -> Result<()> {
@@ -3193,5 +3182,79 @@ token = "toml-bot-token"
             config.daemon.port, 25294,
             "Invalid port should not override"
         );
+    }
+
+    // ---------------------------------------------------------------------------
+    // VAL-ENV-002: CLAWHIP_* vars are removed from primary usage
+    // ---------------------------------------------------------------------------
+
+    #[test]
+    fn daemon_base_url_uses_hermip_env_not_clawhip() {
+        let config = config_with_toml_values();
+
+        // With no env var, falls back to config value.
+        let previous = std::env::var_os("HERMIP_DAEMON_URL");
+        unsafe {
+            std::env::remove_var("HERMIP_DAEMON_URL");
+        }
+        assert_eq!(
+            config.daemon_base_url(),
+            config.daemon.base_url,
+            "without HERMIP_DAEMON_URL, falls back to config"
+        );
+
+        // With HERMIP_DAEMON_URL set, it overrides config.
+        unsafe {
+            std::env::set_var("HERMIP_DAEMON_URL", "http://custom:9999");
+        }
+        assert_eq!(
+            config.daemon_base_url(),
+            "http://custom:9999",
+            "HERMIP_DAEMON_URL should override config"
+        );
+
+        // Restore original env var.
+        unsafe {
+            if let Some(prev) = previous {
+                std::env::set_var("HERMIP_DAEMON_URL", prev);
+            } else {
+                std::env::remove_var("HERMIP_DAEMON_URL");
+            }
+        }
+    }
+
+    #[test]
+    fn monitor_github_token_uses_hermip_env_not_clawhip() {
+        let config = config_with_toml_values();
+
+        // Without env var, falls back to config value.
+        let previous = std::env::var_os("HERMIP_GITHUB_TOKEN");
+        unsafe {
+            std::env::remove_var("HERMIP_GITHUB_TOKEN");
+        }
+        assert_eq!(
+            config.monitor_github_token(),
+            config.monitors.github_token,
+            "without HERMIP_GITHUB_TOKEN, falls back to config"
+        );
+
+        // With HERMIP_GITHUB_TOKEN set, it overrides config.
+        unsafe {
+            std::env::set_var("HERMIP_GITHUB_TOKEN", "ghp_env_token");
+        }
+        assert_eq!(
+            config.monitor_github_token().as_deref(),
+            Some("ghp_env_token"),
+            "HERMIP_GITHUB_TOKEN should override config"
+        );
+
+        // Restore original env var.
+        unsafe {
+            if let Some(prev) = previous {
+                std::env::set_var("HERMIP_GITHUB_TOKEN", prev);
+            } else {
+                std::env::remove_var("HERMIP_GITHUB_TOKEN");
+            }
+        }
     }
 }

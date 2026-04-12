@@ -1660,4 +1660,39 @@ error: failed";
         // Dead pane should never emit stale, even after 1 hour idle
         assert!(!should_emit_stale(&pane, Instant::now(), 1));
     }
+
+    #[test]
+    fn tmux_monitor_uses_hermip_tmux_bin() {
+        // VAL-ENV-005: HERMIP_TMUX_BIN is the primary env var for the tmux binary.
+        let previous = std::env::var_os("HERMIP_TMUX_BIN");
+        unsafe {
+            std::env::remove_var("HERMIP_TMUX_BIN");
+        }
+        // Default when unset.
+        assert_eq!(tmux_bin(), "tmux");
+
+        // When HERMIP_TMUX_BIN is set to a non-empty value, it is used.
+        unsafe {
+            std::env::set_var("HERMIP_TMUX_BIN", "/usr/local/bin/tmux");
+        }
+        assert_eq!(tmux_bin(), "/usr/local/bin/tmux");
+        unsafe {
+            std::env::remove_var("HERMIP_TMUX_BIN");
+        }
+
+        // When HERMIP_TMUX_BIN is set to empty/whitespace, falls back to "tmux".
+        unsafe {
+            std::env::set_var("HERMIP_TMUX_BIN", "  ");
+        }
+        assert_eq!(tmux_bin(), "tmux");
+
+        // Restore original env var.
+        unsafe {
+            if let Some(prev) = previous {
+                std::env::set_var("HERMIP_TMUX_BIN", prev);
+            } else {
+                std::env::remove_var("HERMIP_TMUX_BIN");
+            }
+        }
+    }
 }

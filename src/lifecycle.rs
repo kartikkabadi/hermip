@@ -10,7 +10,6 @@ use crate::{Result, plugins};
 
 const GITHUB_REPO: &str = "FactoryDroid/hermip";
 const SKIP_STAR_PROMPT_ENV: &str = "HERMIP_SKIP_STAR_PROMPT";
-const SKIP_STAR_PROMPT_ENV_LEGACY: &str = "CLAWHIP_SKIP_STAR_PROMPT";
 
 pub fn install(systemd: bool, skip_star_prompt: bool) -> Result<()> {
     let repo_root = current_repo_root()?;
@@ -158,9 +157,7 @@ fn maybe_prompt_to_star_repo(skip_star_prompt: bool) -> Result<()> {
     let stdout = io::stdout();
     let mut input = stdin.lock();
     let mut output = stdout.lock();
-    let env_skip_star_prompt = env::var(SKIP_STAR_PROMPT_ENV)
-        .ok()
-        .or_else(|| env::var(SKIP_STAR_PROMPT_ENV_LEGACY).ok());
+    let env_skip_star_prompt = env::var(SKIP_STAR_PROMPT_ENV).ok();
 
     maybe_prompt_to_star_repo_with(
         skip_star_prompt,
