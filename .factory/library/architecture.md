@@ -185,3 +185,25 @@ Any event kind that does not match a known prefix is normalized into `EventBody:
 - Config backward compatibility is guaranteed for ClawHip format
 - The daemon must remain stable under invalid inputs (no crashes from bad events)
 - Unknown event kinds are normalized to `EventBody::Custom` (permissive, not rejected)
+
+## Feature Flags
+
+Hermip uses compile-time feature flags to gate optional provider integrations:
+
+| Feature | Description | Default |
+|---|---|---|
+| `hermes` | Hermes Agent hook provider (always available) | Yes |
+| `codex-hook` | Codex (OpenAI) hook provider | Yes |
+| `claude-hook` | Claude Code hook provider | Yes |
+
+**Default build** (`cargo build --release`): All three providers are enabled. This maintains full backward compatibility.
+
+**Hermes-only build** (`cargo build --release --no-default-features --features hermes`): Only the Hermes provider is available. The `deliver` subcommand and `prompt_deliver` module are excluded. The `--provider` flag only accepts `hermes`.
+
+**Key gating rules:**
+- `HookProvider::Codex` variant is gated with `#[cfg(feature = "codex-hook")]`
+- `HookProvider::ClaudeCode` variant is gated with `#[cfg(feature = "claude-hook")]`
+- `CODEX_HOOKS_FILE` and `CLAUDE_SETTINGS_FILE` constants are gated with their respective features
+- The `prompt_deliver` module is gated with `#[cfg(any(feature = "codex-hook", feature = "claude-hook"))]`
+- The `Deliver` CLI subcommand is gated with `#[cfg(any(feature = "codex-hook", feature = "claude-hook"))]`
+- Tests that reference gated variants use `#[cfg(feature = "...")]` attributes
