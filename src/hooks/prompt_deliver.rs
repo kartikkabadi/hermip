@@ -721,9 +721,9 @@ mod tests {
         perms.set_mode(0o755);
         fs::set_permissions(&tmux_path, perms).expect("chmod fake tmux");
 
-        let previous_tmux = std::env::var_os("CLAWHIP_TMUX_BIN");
+        let previous_tmux = std::env::var_os("HERMIP_TMUX_BIN");
         unsafe {
-            std::env::set_var("CLAWHIP_TMUX_BIN", &tmux_path);
+            std::env::set_var("HERMIP_TMUX_BIN", &tmux_path);
         }
 
         let config = PromptDeliverConfig {
@@ -743,11 +743,11 @@ mod tests {
 
         if let Some(previous) = previous_tmux {
             unsafe {
-                std::env::set_var("CLAWHIP_TMUX_BIN", previous);
+                std::env::set_var("HERMIP_TMUX_BIN", previous);
             }
         } else {
             unsafe {
-                std::env::remove_var("CLAWHIP_TMUX_BIN");
+                std::env::remove_var("HERMIP_TMUX_BIN");
             }
         }
     }

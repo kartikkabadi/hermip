@@ -506,10 +506,9 @@ pub fn default_sink_name() -> String {
     "discord".to_string()
 }
 
-const DISCORD_TOKEN_ENV_VARS: [&str; 3] = [
+const DISCORD_TOKEN_ENV_VARS: [&str; 2] = [
     "DISCORD_TOKEN",
     "HERMIP_DISCORD_BOT_TOKEN",
-    "CLAWHIP_DISCORD_BOT_TOKEN",
 ];
 pub const CONFIG_EDITOR_MENU_ITEMS: [&str; 8] = [
     "Set Discord bot token",
@@ -1452,33 +1451,15 @@ mod tests {
     }
 
     #[test]
-    fn hermip_env_token_is_preferred_over_legacy() {
+    fn hermip_env_token_is_preferred_over_config() {
         let config = AppConfig::default();
 
-        // When both HERMIP_ and CLAWHIP_ are set, HERMIP_ wins.
+        // When both HERMIP_ and config are set, HERMIP_ wins.
         let token = config.effective_token_with(|name| match name {
             "HERMIP_DISCORD_BOT_TOKEN" => Some("hermip-token".to_string()),
-            "CLAWHIP_DISCORD_BOT_TOKEN" => Some("legacy-token".to_string()),
             _ => None,
         });
         assert_eq!(token.as_deref(), Some("hermip-token"));
-    }
-
-    #[test]
-    fn legacy_env_token_is_still_supported_as_fallback() {
-        let config = AppConfig::default();
-
-        let token = config.effective_token_with(|name| {
-            (name == "CLAWHIP_DISCORD_BOT_TOKEN").then(|| "legacy-token".to_string())
-        });
-
-        assert_eq!(token.as_deref(), Some("legacy-token"));
-        assert_eq!(
-            config.discord_token_source_with(|name| {
-                (name == "CLAWHIP_DISCORD_BOT_TOKEN").then(|| "legacy-token".to_string())
-            }),
-            "env"
-        );
     }
 
     #[test]

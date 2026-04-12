@@ -150,7 +150,10 @@ fn cap_output(value: impl AsRef<str>) -> String {
 }
 
 fn tmux_bin() -> String {
-    std::env::var("CLAWHIP_TMUX_BIN").unwrap_or_else(|_| "tmux".to_string())
+    std::env::var("HERMIP_TMUX_BIN")
+        .ok()
+        .filter(|v| !v.trim().is_empty())
+        .unwrap_or_else(|| "tmux".to_string())
 }
 
 #[cfg(test)]

@@ -75,7 +75,6 @@ impl DiscordClient {
         let api_base = std::env::var("HERMIP_DISCORD_API_BASE")
             .ok()
             .filter(|v| !v.trim().is_empty())
-            .or_else(|| std::env::var("CLAWHIP_DISCORD_API_BASE").ok())
             .unwrap_or_else(|| "https://discord.com/api/v10".to_string());
         let webhook_client = reqwest::Client::new();
 

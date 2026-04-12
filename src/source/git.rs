@@ -406,7 +406,6 @@ pub(crate) fn git_bin() -> String {
     std::env::var("HERMIP_GIT_BIN")
         .ok()
         .filter(|v| !v.trim().is_empty())
-        .or_else(|| std::env::var("CLAWHIP_GIT_BIN").ok().filter(|v| !v.trim().is_empty()))
         .unwrap_or_else(|| "git".to_string())
 }
 

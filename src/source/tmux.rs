@@ -836,7 +836,6 @@ pub(crate) fn tmux_bin() -> String {
     std::env::var("HERMIP_TMUX_BIN")
         .ok()
         .filter(|v| !v.trim().is_empty())
-        .or_else(|| std::env::var("CLAWHIP_TMUX_BIN").ok().filter(|v| !v.trim().is_empty()))
         .unwrap_or_else(|| "tmux".to_string())
 }
 
