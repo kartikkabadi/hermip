@@ -11,7 +11,9 @@ Hermip uses a dual naming scheme for environment variables:
 - **Primary:** `HERMIP_*` prefix (e.g., `HERMIP_DAEMON_PORT`, `HERMIP_CONFIG`, `HERMIP_DAEMON_BASE_URL`)
 - **Backward-compat:** `CLAWHIP_*` prefix (e.g., `CLAWHIP_DAEMON_URL`, `CLAWHIP_DISCORD_BOT_TOKEN`, `CLAWHIP_GITHUB_TOKEN`, `CLAWHIP_DISCORD_API_BASE`, `CLAWHIP_TMUX_BIN`, `CLAWHIP_GIT_BIN`, `CLAWHIP_PLUGIN_DIR`, `CLAWHIP_SKIP_STAR_PROMPT`)
 
-Several code paths still read `CLAWHIP_*` as primary names. Workers should NOT introduce new `CLAWHIP_*` vars — use `HERMIP_*` for all new env vars. The legacy `CLAWHIP_*` vars are preserved for backward compatibility and should be considered read-only compat shims.
+**Current Migration Status:** Several code paths still read `CLAWHIP_*` as primary names (e.g., src/source/git.rs, src/source/tmux.rs, src/discord.rs). The foundation milestone task is to migrate these to HERMIP_* primary usage, keeping CLAWHIP_* only as read-only compat shims or removing them entirely.
+
+Workers should NOT introduce new `CLAWHIP_*` vars — use `HERMIP_*` for all new env vars.
 
 ## Required Environment Variables
 

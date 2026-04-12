@@ -21,6 +21,8 @@ None — this worker uses standard tools (code editing, shell commands, Rust too
 
 2. **Read `.factory/library/architecture.md`** — Understand the system architecture, component relationships, and key invariants.
 
+3. **Follow environment variable conventions** — HERMIP_* is primary for all new environment variables. CLAWHIP_* vars are backward-compatible only and should not be used as primary sources. Never introduce new CLAWHIP_* environment variables.
+
 3. **Write tests first (RED)** — Before implementing any feature, write failing tests that describe the expected behavior. Place unit tests in `#[cfg(test)]` modules and integration tests in `tests/`. Cover:
    - Happy path behavior
    - Error cases (invalid input, missing fields, edge cases)
