@@ -113,6 +113,33 @@ v0.4.0 currently uses these delivery rules:
 - no built-in retry queue
 - source-level tmux keyword windowing, with dispatch remaining stateless
 
+## Design decisions
+
+### Unknown source event handling: permissive normalization (not rejection)
+
+When an incoming event has a kind that is not recognized by the typed event model (`EventBody`), the system **normalizes it to `EventBody::Custom`** rather than rejecting it with an error. This is an intentional design decision, not an oversight.
+
+**Rationale:**
+
+- Hermip is an agent-first, extensible event gateway. Custom events are a first-class concept — `IncomingEvent::custom()` is a core constructor, and `EventBody::Custom` is a variant in the typed event model alongside all built-in variants.
+- Rejecting unknown sources would break backward compatibility for any external tool, script, or plugin that emits events with custom kinds (e.g., `plugin.custom`, `deploy.completed`, `monitor.alert`).
+- The router supports wildcard matching (`event = "*"`) and custom event routing, which would be impossible if unknown kinds were rejected at ingress.
+- The `hermip explain` command explicitly works with partial or unknown payloads — rejection would make debugging route rules harder.
+- Typed event kinds are an internal normalization layer, not an ingress validation gate. The system validates structure (required fields for known kinds) but does not gate on kind identity.
+
+**Valid event kind prefixes (recognized by the typed model):**
+
+- `git.*` — git commit and branch-change events
+- `github.*` — GitHub issue, PR, CI, and release events
+- `tmux.*` — tmux keyword and stale-session events
+- `agent.*` / `session.*` — agent lifecycle events (started, blocked, finished, failed, etc.)
+- `workspace.*` — workspace session, turn, skill, and metrics events
+- `custom` — user-defined events with arbitrary payloads
+
+Any event kind that does not match a known prefix is normalized into `EventBody::Custom` with the original kind preserved in `body.kind`. This ensures the event remains routable and renderable while signaling to downstream consumers that it is not a typed built-in event.
+
+**Testing:** The test `keeps_unknown_events_as_custom` in `src/event/compat.rs` validates this behavior explicitly.
+
 ## Operational verification
 
 The release branch includes a live verification runbook in [`docs/live-verification.md`](docs/live-verification.md). It covers daemon status, custom events, git events, GitHub issue/PR flows, and tmux monitoring.

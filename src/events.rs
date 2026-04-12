@@ -2232,4 +2232,30 @@ mod tests {
             assert_eq!(event.payload["normalized_event"], json!(expected_status));
         }
     }
+
+    /// Design decision: unknown event kinds pass through normalization
+    /// unchanged (permissive, not rejected). This ensures custom events from
+    /// plugins, scripts, and external tools remain routable and renderable.
+    /// See ARCHITECTURE.md "Unknown source event handling" for full rationale.
+    #[test]
+    fn normalize_event_passes_unknown_kinds_through_unchanged() {
+        let event = normalize_event(IncomingEvent {
+            kind: "deploy.completed".into(),
+            channel: Some("ops".into()),
+            mention: None,
+            format: None,
+            template: None,
+            payload: json!({"message": "v2.0 shipped"}),
+        });
+
+        // Kind is preserved as-is — no mapping, no rejection
+        assert_eq!(event.kind, "deploy.completed");
+        // Channel is preserved
+        assert_eq!(event.channel.as_deref(), Some("ops"));
+        // Ingress metadata is still added (event_id, first_seen_at, etc.)
+        assert!(event.payload.get("event_id").is_some());
+        assert!(event.payload.get("first_seen_at").is_some());
+        // No raw_event is added because kind was not remapped
+        assert!(event.payload.get("raw_event").is_none());
+    }
 }

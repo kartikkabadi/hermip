@@ -529,6 +529,12 @@ mod tests {
         ));
     }
 
+    /// Design decision: unknown event kinds are intentionally normalized to
+    /// EventBody::Custom rather than rejected. This is because Hermip is an
+    /// extensible, agent-first event gateway where custom events are a
+    /// first-class concept. Rejecting unknown kinds would break plugins,
+    /// scripts, and external tools that emit events with custom kinds.
+    /// See ARCHITECTURE.md "Unknown source event handling" for full rationale.
     #[test]
     fn keeps_unknown_events_as_custom() {
         let event = IncomingEvent {
@@ -546,6 +552,35 @@ mod tests {
                 assert_eq!(body.kind, "plugin.custom");
                 assert_eq!(body.message, "hello");
                 assert_eq!(body.payload.unwrap()["extra"], json!(true));
+            }
+            other => panic!("expected custom body, got {other:?}"),
+        }
+    }
+
+    /// Verify that the permissive normalization preserves the original kind
+    /// so custom events remain routable and their source is extractable.
+    #[test]
+    fn custom_events_preserve_original_kind_and_source() {
+        let event = IncomingEvent {
+            kind: "deploy.completed".into(),
+            channel: Some("releases".into()),
+            mention: None,
+            format: None,
+            template: None,
+            payload: json!({"message": "v2.0 shipped", "environment": "production"}),
+        };
+
+        let envelope = from_incoming_event(&event).unwrap();
+        match &envelope.body {
+            EventBody::Custom(body) => {
+                // Original kind is preserved in the Custom body
+                assert_eq!(body.kind, "deploy.completed");
+                // Source is derived from the kind prefix
+                assert_eq!(envelope.source, "deploy");
+                // Channel hint is preserved
+                assert_eq!(envelope.metadata.channel_hint.as_deref(), Some("releases"));
+                // Payload data is preserved
+                assert_eq!(body.message, "v2.0 shipped");
             }
             other => panic!("expected custom body, got {other:?}"),
         }

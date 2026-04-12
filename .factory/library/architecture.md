@@ -150,6 +150,33 @@ skills/hermip/SKILL.md   # YAML frontmatter + Markdown instructions
 
 Legacy ClawHip `[discord]` format is transparently mapped to new Hermip config structure.
 
+## Design Decisions
+
+### Unknown source event handling: permissive normalization (not rejection)
+
+When an incoming event has a kind that is not recognized by the typed event model (`EventBody`), the system **normalizes it to `EventBody::Custom`** rather than rejecting it with an error. This is an intentional design decision.
+
+**Rationale:**
+
+- Hermip is an agent-first, extensible event gateway. Custom events are a first-class concept — `IncomingEvent::custom()` is a core constructor, and `EventBody::Custom` is a variant in the typed event model alongside all built-in variants.
+- Rejecting unknown sources would break backward compatibility for any external tool, script, or plugin that emits events with custom kinds (e.g., `plugin.custom`, `deploy.completed`, `monitor.alert`).
+- The router supports wildcard matching (`event = "*"`) and custom event routing, which would be impossible if unknown kinds were rejected at ingress.
+- The `hermip explain` command explicitly works with partial or unknown payloads — rejection would make debugging route rules harder.
+- Typed event kinds are an internal normalization layer, not an ingress validation gate. The system validates structure (required fields for known kinds) but does not gate on kind identity.
+
+**Valid event kind prefixes (recognized by the typed model):**
+
+- `git.*` — git commit and branch-change events
+- `github.*` — GitHub issue, PR, CI, and release events
+- `tmux.*` — tmux keyword and stale-session events
+- `agent.*` / `session.*` — agent lifecycle events (started, blocked, finished, failed, etc.)
+- `workspace.*` — workspace session, turn, skill, and metrics events
+- `custom` — user-defined events with arbitrary payloads
+
+Any event kind that does not match a known prefix is normalized into `EventBody::Custom` with the original kind preserved in `body.kind`. This ensures the event remains routable and renderable while signaling to downstream consumers that it is not a typed built-in event.
+
+**Testing:** The test `keeps_unknown_events_as_custom` in `src/event/compat.rs` validates this behavior explicitly.
+
 ## Key Invariants
 
 - Events are never dropped intentionally — only on sink delivery failure after circuit breaker exhaustion
@@ -157,3 +184,4 @@ Legacy ClawHip `[discord]` format is transparently mapped to new Hermip config s
 - Route matching is AND-logic — all conditions must match
 - Config backward compatibility is guaranteed for ClawHip format
 - The daemon must remain stable under invalid inputs (no crashes from bad events)
+- Unknown event kinds are normalized to `EventBody::Custom` (permissive, not rejected)
