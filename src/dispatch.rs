@@ -80,10 +80,6 @@ impl Dispatcher {
                             }
                         }
                         None => {
-                            for event in self.ci_batcher.flush_all() {
-                                self.deliver_event(event).await;
-                            }
-                            self.flush_all_routine_batches().await;
                             break;
                         }
                     }
@@ -272,15 +268,6 @@ impl Dispatcher {
         }
     }
 
-    async fn flush_all_routine_batches(&mut self) {
-        let Some(routine_batcher) = self.routine_batcher.as_mut() else {
-            return;
-        };
-        for batch in routine_batcher.flush_all() {
-            self.send_routine_batch(batch).await;
-        }
-    }
-
     fn should_batch_routine_delivery(
         &self,
         event: &IncomingEvent,
@@ -405,13 +392,6 @@ impl RoutineDeliveryBatcher {
             }
         }
         batches
-    }
-
-    fn flush_all(&mut self) -> Vec<FlushedRoutineDeliveryBatch> {
-        let keys = self.pending.keys().cloned().collect::<Vec<_>>();
-        keys.into_iter()
-            .filter_map(|key| self.flush_batch(&key))
-            .collect()
     }
 
     fn flush_batch(&mut self, key: &str) -> Option<FlushedRoutineDeliveryBatch> {
@@ -568,13 +548,6 @@ impl GitHubCiBatcher {
             }
         }
         events
-    }
-
-    fn flush_all(&mut self) -> Vec<IncomingEvent> {
-        let keys = self.pending.keys().cloned().collect::<Vec<_>>();
-        keys.into_iter()
-            .filter_map(|key| self.flush_batch(&key))
-            .collect()
     }
 
     fn flush_batch(&mut self, key: &str) -> Option<IncomingEvent> {
@@ -1061,7 +1034,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn dispatcher_flushes_single_routine_delivery_on_shutdown_and_preserves_mention() {
+    async fn dispatcher_drops_single_routine_delivery_on_shutdown() {
         use tokio::time::{Duration, timeout};
 
         let (webhook, mut requests, server) = spawn_webhook_collector(1).await;
@@ -1092,14 +1065,14 @@ mod tests {
         .unwrap();
         drop(tx);
 
-        let request = timeout(Duration::from_secs(2), requests.recv())
-            .await
-            .unwrap()
-            .unwrap();
+        assert!(
+            timeout(Duration::from_millis(250), requests.recv())
+                .await
+                .is_err(),
+            "routine delivery should be dropped on shutdown rather than flushed"
+        );
         task.await.unwrap();
-        server.await.unwrap();
-
-        assert!(request.contains("<@ops> tmux:issue-122 matched 'error' => only"));
+        server.abort();
     }
 
     #[tokio::test]
@@ -1112,8 +1085,7 @@ mod tests {
         // check overlapped the 80ms batch-window expiry, letting the routine
         // event escape the batcher mid-assertion. We now use the same
         // stable pattern as the other batching tests in this file: a 30s
-        // batch window so the batcher cannot time out during the test, and
-        // an explicit `drop(tx)` shutdown to trigger flush_all_routine_batches.
+        // batch window so the batcher cannot time out during the test.
         let (webhook, mut requests, server) = spawn_webhook_collector(2).await;
         let config = AppConfig {
             routes: vec![
@@ -1178,20 +1150,20 @@ mod tests {
             timeout(Duration::from_millis(50), requests.recv())
                 .await
                 .is_err(),
-            "routine delivery escaped batch before shutdown flush"
+            "routine delivery escaped batch before shutdown drop"
         );
 
-        // Shutdown (channel close) triggers flush_all_routine_batches, which
-        // releases the held tmux.keyword delivery regardless of batch window.
+        // Shutdown (channel close) now drops routine deliveries instead of
+        // flushing them, so no second request should arrive.
         drop(tx);
-        let second = timeout(Duration::from_secs(2), requests.recv())
-            .await
-            .expect("routine delivery should flush on shutdown")
-            .expect("webhook collector closed before routine flush");
+        assert!(
+            timeout(Duration::from_millis(250), requests.recv())
+                .await
+                .is_err(),
+            "routine delivery should be dropped on shutdown"
+        );
         task.await.unwrap();
-        server.await.unwrap();
-
-        assert!(second.contains("tmux:issue-122 matched 'error' => queued"));
+        server.abort();
     }
 
     #[tokio::test]
@@ -1272,7 +1244,7 @@ mod tests {
         let (tx, rx) = mpsc::channel(1);
         let router = Router::new(Arc::new(config));
         let mut dispatcher = test_dispatcher(rx, router)
-            .with_routine_batch_window(Some(Duration::from_secs(30)))
+            .with_routine_batch_window(Some(Duration::from_millis(20)))
             .with_batch_tick(Duration::from_millis(5));
         let task = tokio::spawn(async move { dispatcher.run().await.unwrap() });
 
@@ -1284,7 +1256,6 @@ mod tests {
         ))
         .await
         .unwrap();
-        drop(tx);
 
         let first = timeout(Duration::from_secs(2), requests.recv())
             .await
@@ -1294,6 +1265,7 @@ mod tests {
             .await
             .unwrap()
             .unwrap();
+        drop(tx);
         task.await.unwrap();
         server.await.unwrap();
 
