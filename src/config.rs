@@ -626,18 +626,16 @@ fn discord_token_from_env_with<F>(mut get_env: F) -> Option<String>
 where
     F: FnMut(&str) -> Option<String>,
 {
-    // Check HERMIP_* and DISCORD_TOKEN first (non-deprecated)
+    // Check HERMIP_* and DISCORD_TOKEN (non-deprecated).
+    // CLAWHIP_DISCORD_BOT_TOKEN is NOT checked here to avoid duplicate
+    // deprecation warnings: apply_hermip_env_overrides_with() already
+    // handles the CLAWHIP_DISCORD_BOT_TOKEN fallback (with a deprecation
+    // warning) and copies the value into providers.discord.bot_token,
+    // which effective_token_with() falls back to.
     for name in &DISCORD_TOKEN_ENV_VARS[..2] {
         if let Some(token) = normalize_secret(get_env(name)) {
             return Some(token);
         }
-    }
-    // CLAWHIP_DISCORD_BOT_TOKEN is a deprecated fallback (VAL-CROSS-001)
-    if let Some(token) = normalize_secret(get_env("CLAWHIP_DISCORD_BOT_TOKEN")) {
-        eprintln!(
-            "hermip: warning: env var CLAWHIP_DISCORD_BOT_TOKEN is deprecated; use HERMIP_DISCORD_BOT_TOKEN instead"
-        );
-        return Some(token);
     }
     None
 }
@@ -3398,25 +3396,35 @@ token = "toml-bot-token"
     #[test]
     fn clawhip_discord_token_fallback_works() {
         // When only CLAWHIP_DISCORD_BOT_TOKEN is set, it should work as a
-        // deprecated fallback via the DISCORD_TOKEN_ENV_VARS chain.
-        let config = AppConfig::default();
-        let token = config.effective_token_with(|name| {
+        // deprecated fallback via apply_hermip_env_overrides_with(), which
+        // copies the value into providers.discord.bot_token. Then
+        // effective_token_with() finds it through the config field fallback.
+        let mut config = AppConfig::default();
+        config.apply_hermip_env_overrides_with(|name| {
             (name == "CLAWHIP_DISCORD_BOT_TOKEN").then(|| "clawhip-bot-token".to_string())
         });
+        let token = config.effective_token_with(|_| None);
         assert_eq!(
             token.as_deref(),
             Some("clawhip-bot-token"),
-            "CLAWHIP_DISCORD_BOT_TOKEN should work as deprecated fallback"
+            "CLAWHIP_DISCORD_BOT_TOKEN should work as deprecated fallback via config override"
         );
     }
 
     #[test]
     fn hermip_discord_token_overrides_clawhip() {
-        // When both are set, HERMIP_DISCORD_BOT_TOKEN wins.
-        let config = AppConfig::default();
+        // When both are set, HERMIP_DISCORD_BOT_TOKEN wins at the env-var level.
+        // CLAWHIP_DISCORD_BOT_TOKEN also feeds into providers.discord.bot_token
+        // via apply_hermip_env_overrides_with(), but HERMIP_DISCORD_BOT_TOKEN
+        // takes precedence in effective_token_with().
+        let mut config = AppConfig::default();
+        config.apply_hermip_env_overrides_with(|name| match name {
+            "HERMIP_PROVIDERS_DISCORD_TOKEN" => None,
+            "CLAWHIP_DISCORD_BOT_TOKEN" => Some("clawhip-token".to_string()),
+            _ => None,
+        });
         let token = config.effective_token_with(|name| match name {
             "HERMIP_DISCORD_BOT_TOKEN" => Some("hermip-token".to_string()),
-            "CLAWHIP_DISCORD_BOT_TOKEN" => Some("clawhip-token".to_string()),
             _ => None,
         });
         assert_eq!(
@@ -3673,5 +3681,78 @@ token = "toml-bot-token"
     fn is_secret_key_includes_webhook_defaults() {
         assert!(AppConfig::is_secret_key("defaults.webhook_discord"));
         assert!(AppConfig::is_secret_key("defaults.webhook_slack"));
+    }
+
+    // ---------------------------------------------------------------------------
+    // Combined path: env-var-sets-secret → display masking
+    // When a secret is set via HERMIP_PROVIDERS_DISCORD_TOKEN env override,
+    // to_display_toml() must mask it (no plaintext in display output).
+    // ---------------------------------------------------------------------------
+
+    #[test]
+    fn env_var_secret_is_masked_in_display_output() {
+        // Start with a config that has no token in TOML.
+        let mut config = AppConfig::default();
+        assert!(config.providers.discord.bot_token.is_none());
+
+        // Apply env override that sets the Discord bot token.
+        config.apply_hermip_env_overrides_with(|name| {
+            (name == "HERMIP_PROVIDERS_DISCORD_TOKEN").then(|| "super-secret-env-token".to_string())
+        });
+
+        // Verify the token is actually set in the config.
+        assert_eq!(
+            config.providers.discord.bot_token.as_deref(),
+            Some("super-secret-env-token"),
+            "env override should set providers.discord.bot_token"
+        );
+
+        // Verify to_display_toml() masks the secret.
+        let display = config.to_display_toml().unwrap();
+        assert!(
+            !display.contains("super-secret-env-token"),
+            "display TOML should not contain plaintext env-token"
+        );
+        assert!(
+            display.contains("\"***\""),
+            "display TOML should contain masked value"
+        );
+
+        // Verify the original config is not modified by to_display_toml().
+        assert_eq!(
+            config.providers.discord.bot_token.as_deref(),
+            Some("super-secret-env-token"),
+            "original config should still contain the real token"
+        );
+    }
+
+    #[test]
+    fn env_var_webhook_secret_is_masked_in_display_output() {
+        // Verify that webhook URLs set via env override are also masked.
+        let mut config = AppConfig::default();
+
+        config.apply_hermip_env_overrides_with(|name| match name {
+            "HERMIP_DISCORD_WEBHOOK_URL" => {
+                Some("https://discord.com/api/webhooks/123/env-secret".to_string())
+            }
+            "HERMIP_SLACK_WEBHOOK_URL" => {
+                Some("https://hooks.slack.com/services/T/B/env-slack-secret".to_string())
+            }
+            _ => None,
+        });
+
+        let display = config.to_display_toml().unwrap();
+        assert!(
+            !display.contains("env-secret"),
+            "display TOML should not contain plaintext Discord webhook"
+        );
+        assert!(
+            !display.contains("env-slack-secret"),
+            "display TOML should not contain plaintext Slack webhook"
+        );
+        assert!(
+            display.contains("\"***\""),
+            "display TOML should contain masked values"
+        );
     }
 }

@@ -597,7 +597,7 @@ function maybeEnrichStopEvent(repoRoot, payload, eventName) {
 }
 
 async function main() {
-  const provider = arg('--provider') || process.env.HERMIP_PROVIDER || process.env.CLAWHIP_PROVIDER || 'unknown';
+  const provider = arg('--provider') || process.env.HERMIP_PROVIDER || (process.env.CLAWHIP_PROVIDER && (console.warn('hermip: warning: env var CLAWHIP_PROVIDER is deprecated; use HERMIP_PROVIDER instead'), process.env.CLAWHIP_PROVIDER)) || 'unknown';
   const cwd = process.cwd();
   const raw = await readStdin();
   const input = parseJson(raw, {});
