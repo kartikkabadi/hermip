@@ -33,7 +33,14 @@ pub fn install(args: HooksInstallArgs) -> Result<()> {
         println!("  {}", path.display());
     }
     println!("Supported shared events: {}", SHARED_HOOK_EVENTS.join(", "));
+    #[cfg(all(feature = "codex-hook", feature = "claude-hook"))]
     println!("Ingress: hermip native hook --provider <codex|claude-code|hermes>");
+    #[cfg(all(feature = "codex-hook", not(feature = "claude-hook")))]
+    println!("Ingress: hermip native hook --provider <codex|hermes>");
+    #[cfg(all(not(feature = "codex-hook"), feature = "claude-hook"))]
+    println!("Ingress: hermip native hook --provider <claude-code|hermes>");
+    #[cfg(all(not(feature = "codex-hook"), not(feature = "claude-hook")))]
+    println!("Ingress: hermip native hook --provider <hermes>");
 
     Ok(())
 }
@@ -549,22 +556,26 @@ fn selected_providers(args: &HooksInstallArgs) -> Vec<HookProvider> {
 
 #[cfg(all(feature = "codex-hook", not(feature = "claude-hook")))]
 fn default_install_providers() -> Vec<HookProvider> {
-    vec![HookProvider::Codex]
+    vec![HookProvider::Codex, HookProvider::Hermes]
 }
 
 #[cfg(all(not(feature = "codex-hook"), feature = "claude-hook"))]
 fn default_install_providers() -> Vec<HookProvider> {
-    vec![HookProvider::ClaudeCode]
+    vec![HookProvider::ClaudeCode, HookProvider::Hermes]
 }
 
 #[cfg(all(feature = "codex-hook", feature = "claude-hook"))]
 fn default_install_providers() -> Vec<HookProvider> {
-    vec![HookProvider::Codex, HookProvider::ClaudeCode]
+    vec![
+        HookProvider::Codex,
+        HookProvider::ClaudeCode,
+        HookProvider::Hermes,
+    ]
 }
 
 #[cfg(all(not(feature = "codex-hook"), not(feature = "claude-hook")))]
 fn default_install_providers() -> Vec<HookProvider> {
-    vec![]
+    vec![HookProvider::Hermes]
 }
 
 #[cfg(feature = "codex-hook")]
@@ -847,5 +858,72 @@ mod tests {
         for event in SHARED_HOOK_EVENTS {
             assert!(document["hooks"][event].is_array(), "missing {event}");
         }
+    }
+
+    // --- default_install_providers / default_uninstall_providers tests ---
+
+    /// Verify that default_install_providers always includes Hermes.
+    /// This test runs under the current feature-flag configuration, ensuring
+    /// that Hermes is never omitted from the default install set.
+    #[test]
+    fn default_install_providers_always_includes_hermes() {
+        let providers = default_install_providers();
+        assert!(
+            providers.contains(&HookProvider::Hermes),
+            "default_install_providers must include Hermes, got: {:?}",
+            providers
+        );
+    }
+
+    /// Verify that default_uninstall_providers always includes Hermes.
+    #[test]
+    fn default_uninstall_providers_always_includes_hermes() {
+        let providers = default_uninstall_providers();
+        assert!(
+            providers.contains(&HookProvider::Hermes),
+            "default_uninstall_providers must include Hermes, got: {:?}",
+            providers
+        );
+    }
+
+    /// Verify that default_install_providers is never empty.
+    /// Even in hermes-only builds, the function must return at least Hermes.
+    #[test]
+    fn default_install_providers_is_never_empty() {
+        let providers = default_install_providers();
+        assert!(
+            !providers.is_empty(),
+            "default_install_providers must never return an empty vec"
+        );
+    }
+
+    /// Verify install and uninstall defaults contain the same set of providers.
+    #[test]
+    fn install_and_uninstall_defaults_match() {
+        let install = default_install_providers();
+        let uninstall = default_uninstall_providers();
+        assert_eq!(
+            install, uninstall,
+            "default_install_providers and default_uninstall_providers should return the same provider set"
+        );
+    }
+
+    /// When all features are enabled, both default functions return all three providers.
+    #[cfg(all(feature = "codex-hook", feature = "claude-hook"))]
+    #[test]
+    fn default_install_providers_all_features_returns_all_providers() {
+        let providers = default_install_providers();
+        assert_eq!(providers.len(), 3);
+        assert!(providers.contains(&HookProvider::Codex));
+        assert!(providers.contains(&HookProvider::ClaudeCode));
+        assert!(providers.contains(&HookProvider::Hermes));
+    }
+
+    /// When only hermes feature is enabled, default_install_providers returns only Hermes.
+    #[cfg(all(not(feature = "codex-hook"), not(feature = "claude-hook")))]
+    #[test]
+    fn default_install_providers_hermes_only_returns_hermes() {
+        let providers = default_install_providers();
+        assert_eq!(providers, vec![HookProvider::Hermes]);
     }
 }
