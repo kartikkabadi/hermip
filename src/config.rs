@@ -934,7 +934,7 @@ impl AppConfig {
                         )
                         .into());
                     }
-                    if !has_slack_webhook {
+                    if !has_slack_webhook && self.defaults.webhook_slack.is_none() {
                         return Err(format!(
                             "route #{} ({}) must set webhook or slack_webhook when sink = \"slack\"",
                             index + 1,
@@ -3647,6 +3647,26 @@ token = "toml-bot-token"
         config.defaults.webhook_discord =
             Some("https://discord.com/api/webhooks/123/abc".to_string());
         assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn validation_passes_with_default_webhook_slack() {
+        // Config validation should pass when defaults.webhook_slack is set
+        // even without a route-level webhook for a Slack sink route.
+        let mut config = AppConfig::default();
+        // Provide Discord delivery config so the overall "missing Discord" check passes.
+        config.providers.discord.bot_token = Some("test-token".to_string());
+        config.defaults.channel = Some("C12345678".to_string());
+        config.defaults.webhook_slack =
+            Some("https://hooks.slack.com/services/TEST/PLACEHOLDER/fake".to_string());
+        let mut route = RouteRule::default();
+        route.event = "test.event".to_string();
+        route.sink = "slack".to_string();
+        config.routes.push(route);
+        assert!(
+            config.validate().is_ok(),
+            "validation should pass with defaults.webhook_slack"
+        );
     }
 
     #[test]
