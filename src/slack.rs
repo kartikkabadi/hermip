@@ -775,4 +775,36 @@ mod tests {
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("Discord target"));
     }
+
+    // ---------------------------------------------------------------------------
+    // VAL-CROSS-002: Resilience parity between Discord and Slack sinks
+    // ---------------------------------------------------------------------------
+
+    #[test]
+    fn slack_resilience_constants_match_discord() {
+        // Verify that Slack sink resilience constants match Discord sink values.
+        // Discord uses the same constants (MAX_ATTEMPTS=3, JITTER_MS=50,
+        // CIRCUIT_FAILURE_THRESHOLD=3, CIRCUIT_COOLDOWN_SECS=5).
+        assert_eq!(MAX_ATTEMPTS, 3, "Slack MAX_ATTEMPTS should match Discord");
+        assert_eq!(JITTER_MS, 50, "Slack JITTER_MS should match Discord");
+        assert_eq!(
+            CIRCUIT_FAILURE_THRESHOLD, 3,
+            "Slack CIRCUIT_FAILURE_THRESHOLD should match Discord"
+        );
+        assert_eq!(
+            CIRCUIT_COOLDOWN_SECS, 5,
+            "Slack CIRCUIT_COOLDOWN_SECS should match Discord"
+        );
+    }
+
+    #[test]
+    fn slack_has_same_retry_count_as_discord() {
+        // Both Discord and Slack should use the same maximum retry count.
+        // This test verifies structural parity - the constant is the same.
+        assert_eq!(
+            MAX_ATTEMPTS,
+            crate::discord::MAX_ATTEMPTS,
+            "Slack MAX_ATTEMPTS must match Discord MAX_ATTEMPTS for resilience parity"
+        );
+    }
 }

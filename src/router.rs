@@ -3,7 +3,7 @@ use std::sync::Arc;
 use serde_json::json;
 
 use crate::Result;
-use crate::config::{AppConfig, RouteRule, default_sink_name};
+use crate::config::{AppConfig, RouteRule, default_sink_name, non_empty_trimmed};
 use crate::dynamic_tokens;
 use crate::events::{IncomingEvent, MessageFormat, RoutingMetadata};
 use crate::provenance::{DeliveryExplanation, FilterResult, Provenance, RouteExplanation};
@@ -283,6 +283,14 @@ impl Router {
                     return Ok(SinkTarget::DiscordWebhook(webhook.to_string()));
                 }
 
+                // HERMIP_DISCORD_WEBHOOK_URL provides a default Discord
+                // webhook when no route-level webhook is configured.
+                if let Some(default_webhook) =
+                    non_empty_trimmed(self.config.defaults.webhook_discord.as_deref())
+                {
+                    return Ok(SinkTarget::DiscordWebhook(default_webhook.to_string()));
+                }
+
                 // For custom events (e.g. `hermip send --channel X`), the
                 // event-level channel represents explicit user intent and must
                 // take highest priority — above both route and default channels.
@@ -304,16 +312,22 @@ impl Router {
 
                 Ok(SinkTarget::DiscordChannel(channel))
             }
-            "slack" => route
-                .and_then(RouteRule::slack_webhook_target)
-                .map(|webhook| SinkTarget::SlackWebhook(webhook.to_string()))
-                .ok_or_else(|| {
+            "slack" => {
+                let webhook = route
+                    .and_then(RouteRule::slack_webhook_target)
+                    .map(str::to_string)
+                    .or_else(|| {
+                        non_empty_trimmed(self.config.defaults.webhook_slack.as_deref())
+                            .map(str::to_string)
+                    });
+                webhook.map(SinkTarget::SlackWebhook).ok_or_else(|| {
                     format!(
                         "no Slack webhook configured for event {}",
                         event.canonical_kind()
                     )
                     .into()
-                }),
+                })
+            }
             other => Err(format!(
                 "unsupported sink '{other}' for event {}",
                 event.canonical_kind()
@@ -564,8 +578,7 @@ mod tests {
         let config = AppConfig {
             defaults: DefaultsConfig {
                 channel: Some("default".into()),
-                channel_name: None,
-                format: MessageFormat::Compact,
+                ..DefaultsConfig::default()
             },
             routes: vec![
                 RouteRule {
@@ -634,6 +647,7 @@ mod tests {
                 channel: Some("fallback".into()),
                 channel_name: None,
                 format: MessageFormat::Alert,
+                ..DefaultsConfig::default()
             },
             routes: vec![RouteRule {
                 event: "github.*".into(),
@@ -750,8 +764,7 @@ mod tests {
         let config = AppConfig {
             defaults: DefaultsConfig {
                 channel: Some("default".into()),
-                channel_name: None,
-                format: MessageFormat::Compact,
+                ..DefaultsConfig::default()
             },
             routes: vec![RouteRule {
                 event: "tmux.*".into(),
@@ -788,8 +801,7 @@ mod tests {
         let config = AppConfig {
             defaults: DefaultsConfig {
                 channel: Some("default".into()),
-                channel_name: None,
-                format: MessageFormat::Compact,
+                ..DefaultsConfig::default()
             },
             routes: vec![RouteRule {
                 event: "git.commit".into(),
@@ -835,8 +847,7 @@ mod tests {
         let config = AppConfig {
             defaults: DefaultsConfig {
                 channel: Some("default".into()),
-                channel_name: None,
-                format: MessageFormat::Compact,
+                ..DefaultsConfig::default()
             },
             routes: vec![RouteRule {
                 event: "custom".into(),
@@ -865,8 +876,7 @@ mod tests {
         let config = AppConfig {
             defaults: DefaultsConfig {
                 channel: Some("default".into()),
-                channel_name: None,
-                format: MessageFormat::Compact,
+                ..DefaultsConfig::default()
             },
             routes: vec![
                 RouteRule {
@@ -922,8 +932,7 @@ mod tests {
         let config = AppConfig {
             defaults: DefaultsConfig {
                 channel: Some("default".into()),
-                channel_name: None,
-                format: MessageFormat::Compact,
+                ..DefaultsConfig::default()
             },
             routes: vec![RouteRule {
                 event: "tmux.*".into(),
@@ -951,8 +960,7 @@ mod tests {
         let config = AppConfig {
             defaults: DefaultsConfig {
                 channel: Some("default".into()),
-                channel_name: None,
-                format: MessageFormat::Compact,
+                ..DefaultsConfig::default()
             },
             routes: vec![RouteRule {
                 event: "tmux.*".into(),
@@ -980,8 +988,7 @@ mod tests {
         let config = AppConfig {
             defaults: DefaultsConfig {
                 channel: Some("default".into()),
-                channel_name: None,
-                format: MessageFormat::Compact,
+                ..DefaultsConfig::default()
             },
             routes: vec![RouteRule {
                 event: "tmux.*".into(),
@@ -1017,8 +1024,7 @@ mod tests {
         let config = AppConfig {
             defaults: DefaultsConfig {
                 channel: Some("default".into()),
-                channel_name: None,
-                format: MessageFormat::Compact,
+                ..DefaultsConfig::default()
             },
             routes: vec![RouteRule {
                 event: "tmux.*".into(),
@@ -1050,8 +1056,7 @@ mod tests {
         let config = AppConfig {
             defaults: DefaultsConfig {
                 channel: Some("default".into()),
-                channel_name: None,
-                format: MessageFormat::Compact,
+                ..DefaultsConfig::default()
             },
             routes: vec![RouteRule {
                 event: "github.*".into(),
@@ -1089,8 +1094,7 @@ mod tests {
         let config = AppConfig {
             defaults: DefaultsConfig {
                 channel: Some("default".into()),
-                channel_name: None,
-                format: MessageFormat::Compact,
+                ..DefaultsConfig::default()
             },
             routes: vec![RouteRule {
                 event: "github.*".into(),
@@ -1136,8 +1140,7 @@ mod tests {
         let config = AppConfig {
             defaults: DefaultsConfig {
                 channel: Some("default".into()),
-                channel_name: None,
-                format: MessageFormat::Compact,
+                ..DefaultsConfig::default()
             },
             routes: vec![RouteRule {
                 event: "agent.*".into(),
@@ -1197,8 +1200,7 @@ mod tests {
         let config = AppConfig {
             defaults: DefaultsConfig {
                 channel: Some("default".into()),
-                channel_name: None,
-                format: MessageFormat::Compact,
+                ..DefaultsConfig::default()
             },
             routes: vec![RouteRule {
                 event: "session.*".into(),
@@ -1244,8 +1246,7 @@ mod tests {
         let config = AppConfig {
             defaults: DefaultsConfig {
                 channel: Some("default".into()),
-                channel_name: None,
-                format: MessageFormat::Compact,
+                ..DefaultsConfig::default()
             },
             routes: vec![RouteRule {
                 event: "session.*".into(),
@@ -1303,8 +1304,7 @@ mod tests {
         let config = AppConfig {
             defaults: DefaultsConfig {
                 channel: Some("default".into()),
-                channel_name: None,
-                format: MessageFormat::Compact,
+                ..DefaultsConfig::default()
             },
             routes: vec![RouteRule {
                 event: "agent.*".into(),
@@ -1354,8 +1354,7 @@ mod tests {
         let config = AppConfig {
             defaults: DefaultsConfig {
                 channel: Some("default".into()),
-                channel_name: None,
-                format: MessageFormat::Compact,
+                ..DefaultsConfig::default()
             },
             routes: vec![
                 RouteRule {
@@ -1402,8 +1401,7 @@ mod tests {
         let config = AppConfig {
             defaults: DefaultsConfig {
                 channel: Some("default".into()),
-                channel_name: None,
-                format: MessageFormat::Compact,
+                ..DefaultsConfig::default()
             },
             routes: vec![RouteRule {
                 event: "git.commit".into(),
@@ -1440,8 +1438,7 @@ mod tests {
         let tmux_config = AppConfig {
             defaults: DefaultsConfig {
                 channel: Some("default".into()),
-                channel_name: None,
-                format: MessageFormat::Compact,
+                ..DefaultsConfig::default()
             },
             routes: vec![RouteRule {
                 event: "tmux.keyword".into(),
@@ -1469,8 +1466,7 @@ mod tests {
         let session_config = AppConfig {
             defaults: DefaultsConfig {
                 channel: Some("default".into()),
-                channel_name: None,
-                format: MessageFormat::Compact,
+                ..DefaultsConfig::default()
             },
             routes: vec![RouteRule {
                 event: "session.started".into(),
@@ -1511,8 +1507,7 @@ mod tests {
         let config = AppConfig {
             defaults: DefaultsConfig {
                 channel: Some("default".into()),
-                channel_name: None,
-                format: MessageFormat::Compact,
+                ..DefaultsConfig::default()
             },
             routes: vec![
                 RouteRule {
@@ -1562,8 +1557,7 @@ mod tests {
         let config = AppConfig {
             defaults: DefaultsConfig {
                 channel: Some("default".into()),
-                channel_name: None,
-                format: MessageFormat::Compact,
+                ..DefaultsConfig::default()
             },
             routes: vec![
                 RouteRule {
@@ -1613,8 +1607,7 @@ mod tests {
         let config = AppConfig {
             defaults: DefaultsConfig {
                 channel: Some("default".into()),
-                channel_name: None,
-                format: MessageFormat::Compact,
+                ..DefaultsConfig::default()
             },
             routes: vec![RouteRule {
                 event: "tmux.keyword".into(),
@@ -1654,8 +1647,7 @@ mod tests {
         let config = AppConfig {
             defaults: DefaultsConfig {
                 channel: Some("default".into()),
-                channel_name: None,
-                format: MessageFormat::Compact,
+                ..DefaultsConfig::default()
             },
             routes: vec![RouteRule {
                 event: "tmux.keyword".into(),
@@ -1692,8 +1684,7 @@ mod tests {
         let config = AppConfig {
             defaults: DefaultsConfig {
                 channel: Some("default".into()),
-                channel_name: None,
-                format: MessageFormat::Compact,
+                ..DefaultsConfig::default()
             },
             routes: vec![RouteRule {
                 event: "tmux.keyword".into(),
@@ -1730,8 +1721,7 @@ mod tests {
         let config = AppConfig {
             defaults: DefaultsConfig {
                 channel: Some("default".into()),
-                channel_name: None,
-                format: MessageFormat::Compact,
+                ..DefaultsConfig::default()
             },
             routes: vec![RouteRule {
                 event: "tmux.keyword".into(),
@@ -1768,8 +1758,7 @@ mod tests {
         let config = AppConfig {
             defaults: DefaultsConfig {
                 channel: Some("default-ch".into()),
-                channel_name: None,
-                format: MessageFormat::Compact,
+                ..DefaultsConfig::default()
             },
             routes: vec![RouteRule {
                 event: "custom".into(),
@@ -1803,8 +1792,7 @@ mod tests {
         let config = AppConfig {
             defaults: DefaultsConfig {
                 channel: Some("default-ch".into()),
-                channel_name: None,
-                format: MessageFormat::Compact,
+                ..DefaultsConfig::default()
             },
             routes: vec![RouteRule {
                 event: "custom".into(),
@@ -1838,8 +1826,7 @@ mod tests {
         let config = AppConfig {
             defaults: DefaultsConfig {
                 channel: Some("default".into()),
-                channel_name: None,
-                format: MessageFormat::Compact,
+                ..DefaultsConfig::default()
             },
             routes: vec![RouteRule {
                 event: "tmux.keyword".into(),
@@ -1897,8 +1884,7 @@ mod tests {
         let config = AppConfig {
             defaults: DefaultsConfig {
                 channel: Some("default".into()),
-                channel_name: None,
-                format: MessageFormat::Compact,
+                ..DefaultsConfig::default()
             },
             routes: vec![RouteRule {
                 event: "tmux.*".into(),
@@ -1927,8 +1913,7 @@ mod tests {
         let config = AppConfig {
             defaults: DefaultsConfig {
                 channel: Some("default".into()),
-                channel_name: None,
-                format: MessageFormat::Compact,
+                ..DefaultsConfig::default()
             },
             routes: vec![RouteRule {
                 event: "session.*".into(),
@@ -1957,8 +1942,7 @@ mod tests {
         let config = AppConfig {
             defaults: DefaultsConfig {
                 channel: Some("default".into()),
-                channel_name: None,
-                format: MessageFormat::Compact,
+                ..DefaultsConfig::default()
             },
             routes: vec![
                 RouteRule {
@@ -2000,8 +1984,7 @@ mod tests {
         let config = AppConfig {
             defaults: DefaultsConfig {
                 channel: Some("default".into()),
-                channel_name: None,
-                format: MessageFormat::Compact,
+                ..DefaultsConfig::default()
             },
             routes: vec![RouteRule {
                 event: "tmux.*".into(),
@@ -2034,8 +2017,7 @@ mod tests {
         let config = AppConfig {
             defaults: DefaultsConfig {
                 channel: Some("default".into()),
-                channel_name: None,
-                format: MessageFormat::Compact,
+                ..DefaultsConfig::default()
             },
             routes: vec![RouteRule {
                 event: "tmux.*".into(),
@@ -2110,8 +2092,7 @@ mod tests {
         let config = AppConfig {
             defaults: DefaultsConfig {
                 channel: Some("default".into()),
-                channel_name: None,
-                format: MessageFormat::Compact,
+                ..DefaultsConfig::default()
             },
             routes: vec![RouteRule {
                 event: "git.commit".into(),
@@ -2161,8 +2142,7 @@ mod tests {
         let config = AppConfig {
             defaults: DefaultsConfig {
                 channel: Some("default".into()),
-                channel_name: None,
-                format: MessageFormat::Compact,
+                ..DefaultsConfig::default()
             },
             routes: vec![RouteRule {
                 event: "git.commit".into(),
@@ -2203,8 +2183,7 @@ mod tests {
         let config = AppConfig {
             defaults: DefaultsConfig {
                 channel: Some("fallback".into()),
-                channel_name: None,
-                format: MessageFormat::Compact,
+                ..DefaultsConfig::default()
             },
             routes: vec![RouteRule {
                 event: "github.*".into(),
@@ -2231,8 +2210,7 @@ mod tests {
         let config = AppConfig {
             defaults: DefaultsConfig {
                 channel: Some("default".into()),
-                channel_name: None,
-                format: MessageFormat::Compact,
+                ..DefaultsConfig::default()
             },
             routes: vec![
                 RouteRule {
@@ -2273,8 +2251,7 @@ mod tests {
         let config = AppConfig {
             defaults: DefaultsConfig {
                 channel: None,
-                channel_name: None,
-                format: MessageFormat::Compact,
+                ..DefaultsConfig::default()
             },
             routes: vec![],
             ..AppConfig::default()
@@ -2293,8 +2270,7 @@ mod tests {
         let config = AppConfig {
             defaults: DefaultsConfig {
                 channel: Some("general".into()),
-                channel_name: None,
-                format: MessageFormat::Compact,
+                ..DefaultsConfig::default()
             },
             routes: vec![RouteRule {
                 event: "git.commit".into(),
@@ -2321,5 +2297,91 @@ mod tests {
         assert!(parsed["routes"].is_array());
         assert!(parsed["deliveries"].is_array());
         assert_eq!(parsed["deliveries"][0]["sink"], "discord");
+    }
+
+    // ---------------------------------------------------------------------------
+    // VAL-CROSS-001: Default webhook URLs from HERMIP_WEBHOOK_* env vars
+    // VAL-CROSS-002: Router fallback to defaults.webhook_discord/slack
+    // ---------------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn slack_sink_uses_default_webhook_when_route_has_none() {
+        // When no route-level slack_webhook is configured, the router should
+        // fall back to defaults.webhook_slack (from HERMIP_SLACK_WEBHOOK_URL).
+        let config = AppConfig {
+            defaults: DefaultsConfig {
+                webhook_slack: Some("https://hooks.slack.com/services/T/B/default".into()),
+                channel: Some("default".into()),
+                ..DefaultsConfig::default()
+            },
+            routes: vec![RouteRule {
+                event: "tmux.keyword".into(),
+                sink: "slack".into(),
+                ..RouteRule::default()
+            }],
+            ..AppConfig::default()
+        };
+        let router = Router::new(Arc::new(config));
+        let event = IncomingEvent::tmux_keyword("ops".into(), "error".into(), "boom".into(), None);
+        let deliveries = router.resolve(&event).await.unwrap();
+        assert_eq!(deliveries.len(), 1);
+        assert_eq!(deliveries[0].sink, "slack");
+        assert!(matches!(
+            &deliveries[0].target,
+            SinkTarget::SlackWebhook(url) if url == "https://hooks.slack.com/services/T/B/default"
+        ));
+    }
+
+    #[tokio::test]
+    async fn discord_sink_uses_default_webhook_when_route_has_none() {
+        // When no route-level webhook is configured, the router should
+        // fall back to defaults.webhook_discord (from HERMIP_DISCORD_WEBHOOK_URL).
+        let config = AppConfig {
+            defaults: DefaultsConfig {
+                webhook_discord: Some("https://discord.com/api/webhooks/123/abc".into()),
+                channel: Some("default".into()),
+                ..DefaultsConfig::default()
+            },
+            routes: vec![RouteRule {
+                event: "tmux.keyword".into(),
+                ..RouteRule::default()
+            }],
+            ..AppConfig::default()
+        };
+        let router = Router::new(Arc::new(config));
+        let event = IncomingEvent::tmux_keyword("ops".into(), "error".into(), "boom".into(), None);
+        let deliveries = router.resolve(&event).await.unwrap();
+        assert_eq!(deliveries.len(), 1);
+        assert_eq!(deliveries[0].sink, "discord");
+        assert!(matches!(
+            &deliveries[0].target,
+            SinkTarget::DiscordWebhook(url) if url == "https://discord.com/api/webhooks/123/abc"
+        ));
+    }
+
+    #[tokio::test]
+    async fn route_webhook_takes_precedence_over_default() {
+        // Route-level webhook should take precedence over defaults.webhook_*.
+        let config = AppConfig {
+            defaults: DefaultsConfig {
+                webhook_discord: Some("https://discord.com/api/webhooks/default/abc".into()),
+                channel: Some("default".into()),
+                ..DefaultsConfig::default()
+            },
+            routes: vec![RouteRule {
+                event: "tmux.keyword".into(),
+                webhook: Some("https://discord.com/api/webhooks/route/xyz".into()),
+                ..RouteRule::default()
+            }],
+            ..AppConfig::default()
+        };
+        let router = Router::new(Arc::new(config));
+        let event = IncomingEvent::tmux_keyword("ops".into(), "error".into(), "boom".into(), None);
+        let deliveries = router.resolve(&event).await.unwrap();
+        assert_eq!(deliveries.len(), 1);
+        assert!(matches!(
+            &deliveries[0].target,
+            SinkTarget::DiscordWebhook(url) if url == "https://discord.com/api/webhooks/route/xyz"
+        ));
     }
 }

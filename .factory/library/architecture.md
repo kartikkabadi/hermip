@@ -142,13 +142,24 @@ skills/hermip/SKILL.md   # YAML frontmatter + Markdown instructions
 
 ## Configuration Hierarchy (highest to lowest precedence)
 
-1. Environment variables (`HERMIP_*`)
+1. Environment variables (`HERMIP_*`; deprecated `CLAWHIP_*` as fallback)
 2. CLI flags (`--config`, `--port`)
 3. Local config (`./hermip.toml`)
 4. Global config (`~/.config/hermip/hermip.toml`)
 5. Built-in defaults
 
 Legacy ClawHip `[discord]` format is transparently mapped to new Hermip config structure.
+
+CLAWHIP_* environment variables are deprecated but functional: when both `HERMIP_*` and `CLAWHIP_*` are set, `HERMIP_*` wins. When only `CLAWHIP_*` is set, it works as a fallback with a deprecation warning printed to stderr.
+
+### Default Webhook URLs
+
+The `[defaults]` section supports `webhook_discord` and `webhook_slack` fields, which provide default webhook URLs for routes that don't specify their own. These are overridden by `HERMIP_DISCORD_WEBHOOK_URL` and `HERMIP_SLACK_WEBHOOK_URL` env vars respectively.
+
+The router resolves webhook targets with this precedence:
+1. Route-level `webhook` or `slack_webhook` field
+2. `defaults.webhook_discord` / `defaults.webhook_slack` (from env var or TOML)
+3. Error if no webhook configured
 
 ## Design Decisions
 

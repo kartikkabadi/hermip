@@ -403,9 +403,19 @@ pub(crate) fn repo_display_name(repo: &GitRepoMonitor) -> String {
 }
 
 pub(crate) fn git_bin() -> String {
+    // VAL-CROSS-001: HERMIP_* is primary; CLAWHIP_* is deprecated fallback.
     std::env::var("HERMIP_GIT_BIN")
         .ok()
         .filter(|v| !v.trim().is_empty())
+        .or_else(|| {
+            let legacy = std::env::var("CLAWHIP_GIT_BIN")
+                .ok()
+                .filter(|v| !v.trim().is_empty())?;
+            eprintln!(
+                "hermip: warning: env var CLAWHIP_GIT_BIN is deprecated; use HERMIP_GIT_BIN instead"
+            );
+            Some(legacy)
+        })
         .unwrap_or_else(|| "git".to_string())
 }
 

@@ -7,6 +7,7 @@ use serde::Deserialize;
 use crate::Result;
 
 const PLUGIN_DIR_ENV: &str = "HERMIP_PLUGIN_DIR";
+const PLUGIN_DIR_ENV_LEGACY: &str = "CLAWHIP_PLUGIN_DIR";
 
 #[derive(Debug, Clone, Deserialize)]
 struct PluginManifest {
@@ -94,10 +95,18 @@ fn plugin_dir_candidates() -> Vec<PathBuf> {
     let mut candidates = Vec::new();
 
     // Check HERMIP_PLUGIN_DIR env var for plugin directory override.
-    if let Some(dir) = env::var_os(PLUGIN_DIR_ENV)
+    // VAL-CROSS-001: CLAWHIP_PLUGIN_DIR is a deprecated fallback.
+    let env_dir = env::var_os(PLUGIN_DIR_ENV)
         .map(PathBuf::from)
         .filter(|path| !path.as_os_str().is_empty())
-    {
+        .or_else(|| {
+            let legacy = env::var_os(PLUGIN_DIR_ENV_LEGACY)
+                .map(PathBuf::from)
+                .filter(|path| !path.as_os_str().is_empty())?;
+            eprintln!("hermip: warning: env var CLAWHIP_PLUGIN_DIR is deprecated; use HERMIP_PLUGIN_DIR instead");
+            Some(legacy)
+        });
+    if let Some(dir) = env_dir {
         candidates.push(dir);
     }
 

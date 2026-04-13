@@ -987,8 +987,7 @@ mod tests {
         AppConfig {
             defaults: DefaultsConfig {
                 channel: Some("ops".into()),
-                channel_name: None,
-                format: MessageFormat::Compact,
+                ..DefaultsConfig::default()
             },
             cron: CronConfig {
                 poll_interval_secs: 30,

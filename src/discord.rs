@@ -15,7 +15,7 @@ use crate::core::dlq::{Dlq, DlqEntry};
 use crate::core::rate_limit::RateLimiter;
 use crate::sink::{SinkMessage, SinkTarget};
 
-const MAX_ATTEMPTS: u32 = 3;
+pub(crate) const MAX_ATTEMPTS: u32 = 3;
 const JITTER_MS: u64 = 50;
 const CIRCUIT_FAILURE_THRESHOLD: u32 = 3;
 const CIRCUIT_COOLDOWN_SECS: u64 = 5;
@@ -75,6 +75,11 @@ impl DiscordClient {
         let api_base = std::env::var("HERMIP_DISCORD_API_BASE")
             .ok()
             .filter(|v| !v.trim().is_empty())
+            .or_else(|| {
+                let legacy = std::env::var("CLAWHIP_DISCORD_API_BASE").ok().filter(|v| !v.trim().is_empty())?;
+                eprintln!("hermip: warning: env var CLAWHIP_DISCORD_API_BASE is deprecated; use HERMIP_DISCORD_API_BASE instead");
+                Some(legacy)
+            })
             .unwrap_or_else(|| "https://discord.com/api/v10".to_string());
         let webhook_client = reqwest::Client::new();
 

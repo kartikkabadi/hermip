@@ -3,17 +3,13 @@
 **What belongs here:** Env vars, external dependencies, setup notes.
 **What does NOT belong here:** Service ports/commands (use services.yaml).
 
----
-
 ## Environment Variable Naming Convention
 
 Hermip uses a dual naming scheme for environment variables:
 - **Primary:** `HERMIP_*` prefix (e.g., `HERMIP_DAEMON_PORT`, `HERMIP_CONFIG`, `HERMIP_DAEMON_BASE_URL`)
-- **Backward-compat:** `CLAWHIP_*` prefix (e.g., `CLAWHIP_DAEMON_URL`, `CLAWHIP_DISCORD_BOT_TOKEN`, `CLAWHIP_GITHUB_TOKEN`, `CLAWHIP_DISCORD_API_BASE`, `CLAWHIP_TMUX_BIN`, `CLAWHIP_GIT_BIN`, `CLAWHIP_PLUGIN_DIR`, `CLAWHIP_SKIP_STAR_PROMPT`)
+- **Backward-compat (deprecated):** `CLAWHIP_*` prefix (e.g., `CLAWHIP_DAEMON_URL`, `CLAWHIP_DISCORD_BOT_TOKEN`, `CLAWHIP_GITHUB_TOKEN`, `CLAWHIP_DISCORD_API_BASE`, `CLAWHIP_TMUX_BIN`, `CLAWHIP_GIT_BIN`, `CLAWHIP_PLUGIN_DIR`, `CLAWHIP_SKIP_STAR_PROMPT`, `CLAWHIP_DISCORD_WEBHOOK_URL`, `CLAWHIP_SLACK_WEBHOOK_URL`)
 
-**Current Migration Status:** Several code paths still read `CLAWHIP_*` as primary names (e.g., src/source/git.rs, src/source/tmux.rs, src/discord.rs). The foundation milestone task is to migrate these to HERMIP_* primary usage, keeping CLAWHIP_* only as read-only compat shims or removing them entirely.
-
-Workers should NOT introduce new `CLAWHIP_*` vars — use `HERMIP_*` for all new env vars.
+**Current Migration Status:** HERMIP_* vars are primary. CLAWHIP_* vars are deprecated but functional as backward-compat fallbacks with deprecation warnings. When both are set, HERMIP_* wins. Workers should NOT introduce new `CLAWHIP_*` vars — use `HERMIP_*` for all new env vars.
 
 ## Required Environment Variables
 

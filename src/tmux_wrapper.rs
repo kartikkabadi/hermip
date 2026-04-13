@@ -730,8 +730,7 @@ mod tests {
         let config = AppConfig {
             defaults: DefaultsConfig {
                 channel: Some("default".into()),
-                channel_name: None,
-                format: crate::events::MessageFormat::Compact,
+                ..DefaultsConfig::default()
             },
             routes: vec![RouteRule {
                 event: "tmux.*".into(),
@@ -783,8 +782,7 @@ mod tests {
         let config = AppConfig {
             defaults: DefaultsConfig {
                 channel: Some("default".into()),
-                channel_name: None,
-                format: crate::events::MessageFormat::Compact,
+                ..DefaultsConfig::default()
             },
             routes: vec![
                 RouteRule {
@@ -839,8 +837,7 @@ mod tests {
         let config = AppConfig {
             defaults: DefaultsConfig {
                 channel: Some("default".into()),
-                channel_name: None,
-                format: crate::events::MessageFormat::Compact,
+                ..DefaultsConfig::default()
             },
             routes: vec![RouteRule {
                 event: "tmux.*".into(),

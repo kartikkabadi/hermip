@@ -833,9 +833,15 @@ pub(crate) fn last_nonempty_line(content: &str) -> String {
 }
 
 pub(crate) fn tmux_bin() -> String {
+    // VAL-CROSS-001: HERMIP_* is primary; CLAWHIP_* is deprecated fallback.
     std::env::var("HERMIP_TMUX_BIN")
         .ok()
         .filter(|v| !v.trim().is_empty())
+        .or_else(|| {
+            let legacy = std::env::var("CLAWHIP_TMUX_BIN").ok().filter(|v| !v.trim().is_empty())?;
+            eprintln!("hermip: warning: env var CLAWHIP_TMUX_BIN is deprecated; use HERMIP_TMUX_BIN instead");
+            Some(legacy)
+        })
         .unwrap_or_else(|| "tmux".to_string())
 }
 

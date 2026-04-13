@@ -17,6 +17,35 @@ fn env_var_non_empty(name: &str) -> Option<String> {
     env::var(name).ok().filter(|v| !v.trim().is_empty())
 }
 
+/// Check a deprecated CLAWHIP_* env var as a backward-compat fallback.
+/// Returns `Some(value)` if the var is set and non-empty, after printing
+/// a deprecation warning to stderr. Returns `None` otherwise.
+///
+/// VAL-CROSS-001: CLAWHIP_* vars remain functional as deprecated fallbacks.
+fn env_var_non_empty_deprecated(legacy_name: &str) -> Option<String> {
+    let value = env_var_non_empty(legacy_name)?;
+    eprintln!(
+        "hermip: warning: env var {legacy_name} is deprecated; use HERMIP_* equivalent instead"
+    );
+    Some(value)
+}
+
+/// Check a deprecated CLAWHIP_* env var as a backward-compat fallback.
+/// Returns `Some(value)` if the var is set and non-empty, after printing
+/// a deprecation warning to stderr. Returns `None` otherwise.
+///
+/// VAL-CROSS-001: CLAWHIP_* vars remain functional as deprecated fallbacks.
+fn deprecated_fallback<F>(get_env: &mut F, legacy_name: &str) -> Option<String>
+where
+    F: FnMut(&str) -> Option<String>,
+{
+    let value = get_env(legacy_name).filter(|v| !v.trim().is_empty())?;
+    eprintln!(
+        "hermip: warning: env var {legacy_name} is deprecated; use HERMIP_* equivalent instead"
+    );
+    Some(value)
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct AppConfig {
     #[serde(default, skip_serializing_if = "DiscordConfig::is_empty")]
@@ -126,6 +155,14 @@ pub struct DefaultsConfig {
     pub channel_name: Option<String>,
     #[serde(default)]
     pub format: MessageFormat,
+    /// Default Discord webhook URL for routes that don't specify one.
+    /// Override via HERMIP_DISCORD_WEBHOOK_URL env var.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub webhook_discord: Option<String>,
+    /// Default Slack webhook URL for routes that don't specify one.
+    /// Override via HERMIP_SLACK_WEBHOOK_URL env var.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub webhook_slack: Option<String>,
 }
 
 impl Default for DefaultsConfig {
@@ -134,6 +171,8 @@ impl Default for DefaultsConfig {
             channel: None,
             channel_name: None,
             format: MessageFormat::Compact,
+            webhook_discord: None,
+            webhook_slack: None,
         }
     }
 }
@@ -502,7 +541,11 @@ pub fn default_sink_name() -> String {
     "discord".to_string()
 }
 
-const DISCORD_TOKEN_ENV_VARS: [&str; 2] = ["DISCORD_TOKEN", "HERMIP_DISCORD_BOT_TOKEN"];
+const DISCORD_TOKEN_ENV_VARS: [&str; 3] = [
+    "DISCORD_TOKEN",
+    "HERMIP_DISCORD_BOT_TOKEN",
+    "CLAWHIP_DISCORD_BOT_TOKEN",
+];
 pub const CONFIG_EDITOR_MENU_ITEMS: [&str; 8] = [
     "Set Discord bot token",
     "Set daemon base URL",
@@ -572,7 +615,7 @@ fn normalize_secret(value: Option<String>) -> Option<String> {
     })
 }
 
-fn non_empty_trimmed(value: Option<&str>) -> Option<&str> {
+pub fn non_empty_trimmed(value: Option<&str>) -> Option<&str> {
     value.and_then(|value| {
         let trimmed = value.trim();
         (!trimmed.is_empty()).then_some(trimmed)
@@ -583,9 +626,20 @@ fn discord_token_from_env_with<F>(mut get_env: F) -> Option<String>
 where
     F: FnMut(&str) -> Option<String>,
 {
-    DISCORD_TOKEN_ENV_VARS
-        .iter()
-        .find_map(|name| normalize_secret(get_env(name)))
+    // Check HERMIP_* and DISCORD_TOKEN first (non-deprecated)
+    for name in &DISCORD_TOKEN_ENV_VARS[..2] {
+        if let Some(token) = normalize_secret(get_env(name)) {
+            return Some(token);
+        }
+    }
+    // CLAWHIP_DISCORD_BOT_TOKEN is a deprecated fallback (VAL-CROSS-001)
+    if let Some(token) = normalize_secret(get_env("CLAWHIP_DISCORD_BOT_TOKEN")) {
+        eprintln!(
+            "hermip: warning: env var CLAWHIP_DISCORD_BOT_TOKEN is deprecated; use HERMIP_DISCORD_BOT_TOKEN instead"
+        );
+        return Some(token);
+    }
+    None
 }
 
 impl AppConfig {
@@ -619,18 +673,28 @@ impl AppConfig {
     /// env-var reader. Uses the same pattern as `effective_token_with()` and
     /// `discord_token_source_with()` to enable unit testing without setting
     /// real environment variables.
+    ///
+    /// VAL-CROSS-001: HERMIP_* vars are primary; CLAWHIP_* vars are
+    /// deprecated but functional as backward-compat fallbacks. When both
+    /// are set, HERMIP_* wins and a deprecation warning is NOT emitted
+    /// (the user is already using the correct var). A deprecation warning
+    /// IS emitted when only the CLAWHIP_* var is set.
     pub fn apply_hermip_env_overrides_with<F>(&mut self, mut get_env: F)
     where
         F: FnMut(&str) -> Option<String>,
     {
         // HERMIP_DAEMON_PORT overrides [daemon].port
+        // CLAWHIP_DAEMON_PORT is a deprecated fallback.
         if let Some(port_str) = get_env("HERMIP_DAEMON_PORT")
+            .or_else(|| deprecated_fallback(&mut get_env, "CLAWHIP_DAEMON_PORT"))
             && let Ok(port) = port_str.parse::<u16>()
         {
             self.daemon.port = port;
         }
         // HERMIP_DAEMON_BASE_URL overrides [daemon].base_url
+        // CLAWHIP_DAEMON_URL is a deprecated fallback.
         if let Some(url) = get_env("HERMIP_DAEMON_BASE_URL")
+            .or_else(|| deprecated_fallback(&mut get_env, "CLAWHIP_DAEMON_URL"))
             && !url.trim().is_empty()
         {
             self.daemon.base_url = url.trim().to_string();
@@ -649,7 +713,9 @@ impl AppConfig {
             self.defaults.format = format;
         }
         // HERMIP_PROVIDERS_DISCORD_TOKEN overrides [providers.discord].token
+        // CLAWHIP_DISCORD_BOT_TOKEN is a deprecated fallback.
         if let Some(token) = get_env("HERMIP_PROVIDERS_DISCORD_TOKEN")
+            .or_else(|| deprecated_fallback(&mut get_env, "CLAWHIP_DISCORD_BOT_TOKEN"))
             && !token.trim().is_empty()
         {
             self.providers.discord.bot_token = Some(token.trim().to_string());
@@ -659,6 +725,22 @@ impl AppConfig {
             && !name.trim().is_empty()
         {
             self.defaults.channel_name = Some(name.trim().to_string());
+        }
+        // HERMIP_DISCORD_WEBHOOK_URL overrides [defaults].webhook_discord
+        // CLAWHIP_DISCORD_WEBHOOK_URL is a deprecated fallback.
+        if let Some(url) = get_env("HERMIP_DISCORD_WEBHOOK_URL")
+            .or_else(|| deprecated_fallback(&mut get_env, "CLAWHIP_DISCORD_WEBHOOK_URL"))
+            && !url.trim().is_empty()
+        {
+            self.defaults.webhook_discord = Some(url.trim().to_string());
+        }
+        // HERMIP_SLACK_WEBHOOK_URL overrides [defaults].webhook_slack
+        // CLAWHIP_SLACK_WEBHOOK_URL is a deprecated fallback.
+        if let Some(url) = get_env("HERMIP_SLACK_WEBHOOK_URL")
+            .or_else(|| deprecated_fallback(&mut get_env, "CLAWHIP_SLACK_WEBHOOK_URL"))
+            && !url.trim().is_empty()
+        {
+            self.defaults.webhook_slack = Some(url.trim().to_string());
         }
     }
 
@@ -706,6 +788,16 @@ impl AppConfig {
             .github_token
             .as_ref()
             .map(|_| "***".to_string());
+        config.defaults.webhook_discord = config
+            .defaults
+            .webhook_discord
+            .as_ref()
+            .map(|_| "***".to_string());
+        config.defaults.webhook_slack = config
+            .defaults
+            .webhook_slack
+            .as_ref()
+            .map(|_| "***".to_string());
         for route in &mut config.routes {
             route.webhook = route.webhook.as_ref().map(|_| "***".to_string());
             route.slack_webhook = route.slack_webhook.as_ref().map(|_| "***".to_string());
@@ -724,7 +816,11 @@ impl AppConfig {
     pub fn is_secret_key(key: &str) -> bool {
         matches!(
             key,
-            "discord.token" | "providers.discord.bot_token" | "monitors.github_token"
+            "discord.token"
+                | "providers.discord.bot_token"
+                | "monitors.github_token"
+                | "defaults.webhook_discord"
+                | "defaults.webhook_slack"
         ) || key.ends_with(".webhook")
             || key.ends_with(".slack_webhook")
     }
@@ -883,9 +979,12 @@ impl AppConfig {
             }
         }
 
-        if self.effective_token().is_none() && !self.has_webhook_routes() {
+        if self.effective_token().is_none()
+            && !self.has_webhook_routes()
+            && self.defaults.webhook_discord.is_none()
+        {
             return Err(
-                "missing Discord delivery config: configure [providers.discord].token (or legacy [discord].token) or at least one route webhook"
+                "missing Discord delivery config: configure [providers.discord].token (or legacy [discord].token), at least one route webhook, or HERMIP_DISCORD_WEBHOOK_URL"
                     .into(),
             );
         }
@@ -1166,11 +1265,15 @@ impl AppConfig {
     }
 
     pub fn daemon_base_url(&self) -> String {
-        env_var_non_empty("HERMIP_DAEMON_URL").unwrap_or_else(|| self.daemon.base_url.clone())
+        env_var_non_empty("HERMIP_DAEMON_URL")
+            .or_else(|| env_var_non_empty_deprecated("CLAWHIP_DAEMON_URL"))
+            .unwrap_or_else(|| self.daemon.base_url.clone())
     }
 
     pub fn monitor_github_token(&self) -> Option<String> {
-        env_var_non_empty("HERMIP_GITHUB_TOKEN").or_else(|| self.monitors.github_token.clone())
+        env_var_non_empty("HERMIP_GITHUB_TOKEN")
+            .or_else(|| env_var_non_empty_deprecated("CLAWHIP_GITHUB_TOKEN"))
+            .or_else(|| self.monitors.github_token.clone())
     }
 
     pub fn run_interactive_editor(&mut self, path: &Path) -> Result<()> {
@@ -1622,8 +1725,7 @@ mod tests {
             },
             defaults: DefaultsConfig {
                 channel: Some("general".into()),
-                channel_name: None,
-                format: MessageFormat::Compact,
+                ..DefaultsConfig::default()
             },
             routes: vec![RouteRule {
                 event: "git.commit".into(),
@@ -2226,7 +2328,7 @@ default_channel = "legacy-default-channel"
             defaults: DefaultsConfig {
                 channel: Some("default-channel".into()),
                 channel_name: Some("general".into()),
-                format: MessageFormat::Compact,
+                ..DefaultsConfig::default()
             },
             routes: vec![
                 RouteRule {
@@ -2458,7 +2560,7 @@ default_channel = "legacy-default-channel"
             defaults: DefaultsConfig {
                 channel: Some("toml-channel".into()),
                 channel_name: Some("toml-channel-name".into()),
-                format: MessageFormat::Compact,
+                ..DefaultsConfig::default()
             },
             providers: ProvidersConfig {
                 discord: DiscordConfig {
@@ -3186,6 +3288,7 @@ token = "toml-bot-token"
 
     // ---------------------------------------------------------------------------
     // VAL-ENV-002: CLAWHIP_* vars are removed from primary usage
+    // VAL-CROSS-001: CLAWHIP_* vars remain as deprecated fallbacks
     // ---------------------------------------------------------------------------
 
     #[test]
@@ -3256,5 +3359,299 @@ token = "toml-bot-token"
                 std::env::remove_var("HERMIP_GITHUB_TOKEN");
             }
         }
+    }
+
+    // ---------------------------------------------------------------------------
+    // VAL-CROSS-001: CLAWHIP_* backward-compat fallbacks
+    // ---------------------------------------------------------------------------
+
+    #[test]
+    fn clawhip_daemon_port_fallback_works() {
+        // When only CLAWHIP_DAEMON_PORT is set (not HERMIP_DAEMON_PORT),
+        // it should still work as a deprecated fallback.
+        let mut config = AppConfig::default();
+        config.apply_hermip_env_overrides_with(|name| {
+            (name == "CLAWHIP_DAEMON_PORT").then(|| "31999".to_string())
+        });
+        assert_eq!(
+            config.daemon.port, 31999,
+            "CLAWHIP_DAEMON_PORT should work as fallback"
+        );
+    }
+
+    #[test]
+    fn hermip_daemon_port_overrides_clawhip() {
+        // When both HERMIP_DAEMON_PORT and CLAWHIP_DAEMON_PORT are set,
+        // HERMIP_* should win.
+        let mut config = AppConfig::default();
+        config.apply_hermip_env_overrides_with(|name| match name {
+            "HERMIP_DAEMON_PORT" => Some("30999".to_string()),
+            "CLAWHIP_DAEMON_PORT" => Some("31999".to_string()),
+            _ => None,
+        });
+        assert_eq!(
+            config.daemon.port, 30999,
+            "HERMIP_DAEMON_PORT should override CLAWHIP_DAEMON_PORT"
+        );
+    }
+
+    #[test]
+    fn clawhip_discord_token_fallback_works() {
+        // When only CLAWHIP_DISCORD_BOT_TOKEN is set, it should work as a
+        // deprecated fallback via the DISCORD_TOKEN_ENV_VARS chain.
+        let config = AppConfig::default();
+        let token = config.effective_token_with(|name| {
+            (name == "CLAWHIP_DISCORD_BOT_TOKEN").then(|| "clawhip-bot-token".to_string())
+        });
+        assert_eq!(
+            token.as_deref(),
+            Some("clawhip-bot-token"),
+            "CLAWHIP_DISCORD_BOT_TOKEN should work as deprecated fallback"
+        );
+    }
+
+    #[test]
+    fn hermip_discord_token_overrides_clawhip() {
+        // When both are set, HERMIP_DISCORD_BOT_TOKEN wins.
+        let config = AppConfig::default();
+        let token = config.effective_token_with(|name| match name {
+            "HERMIP_DISCORD_BOT_TOKEN" => Some("hermip-token".to_string()),
+            "CLAWHIP_DISCORD_BOT_TOKEN" => Some("clawhip-token".to_string()),
+            _ => None,
+        });
+        assert_eq!(
+            token.as_deref(),
+            Some("hermip-token"),
+            "HERMIP_DISCORD_BOT_TOKEN should take precedence over CLAWHIP_DISCORD_BOT_TOKEN"
+        );
+    }
+
+    #[test]
+    fn clawhip_discord_webhook_url_fallback_works() {
+        // When only CLAWHIP_DISCORD_WEBHOOK_URL is set, it should work as
+        // a deprecated fallback for defaults.webhook_discord.
+        let mut config = AppConfig::default();
+        config.apply_hermip_env_overrides_with(|name| {
+            (name == "CLAWHIP_DISCORD_WEBHOOK_URL")
+                .then(|| "https://discord.com/api/webhooks/legacy/abc".to_string())
+        });
+        assert_eq!(
+            config.defaults.webhook_discord.as_deref(),
+            Some("https://discord.com/api/webhooks/legacy/abc"),
+            "CLAWHIP_DISCORD_WEBHOOK_URL should work as deprecated fallback"
+        );
+    }
+
+    #[test]
+    fn hermip_discord_webhook_url_overrides_clawhip() {
+        // When both are set, HERMIP_DISCORD_WEBHOOK_URL wins.
+        let mut config = AppConfig::default();
+        config.apply_hermip_env_overrides_with(|name| match name {
+            "HERMIP_DISCORD_WEBHOOK_URL" => Some("https://discord.com/hermip".to_string()),
+            "CLAWHIP_DISCORD_WEBHOOK_URL" => Some("https://discord.com/clawhip".to_string()),
+            _ => None,
+        });
+        assert_eq!(
+            config.defaults.webhook_discord.as_deref(),
+            Some("https://discord.com/hermip"),
+            "HERMIP_DISCORD_WEBHOOK_URL should override CLAWHIP_DISCORD_WEBHOOK_URL"
+        );
+    }
+
+    #[test]
+    fn clawhip_slack_webhook_url_fallback_works() {
+        // When only CLAWHIP_SLACK_WEBHOOK_URL is set, it should work as
+        // a deprecated fallback for defaults.webhook_slack.
+        let mut config = AppConfig::default();
+        config.apply_hermip_env_overrides_with(|name| {
+            (name == "CLAWHIP_SLACK_WEBHOOK_URL")
+                .then(|| "https://hooks.slack.com/services/T/B/legacy".to_string())
+        });
+        assert_eq!(
+            config.defaults.webhook_slack.as_deref(),
+            Some("https://hooks.slack.com/services/T/B/legacy"),
+            "CLAWHIP_SLACK_WEBHOOK_URL should work as deprecated fallback"
+        );
+    }
+
+    #[test]
+    fn hermip_slack_webhook_url_overrides_clawhip() {
+        // When both are set, HERMIP_SLACK_WEBHOOK_URL wins.
+        let mut config = AppConfig::default();
+        config.apply_hermip_env_overrides_with(|name| match name {
+            "HERMIP_SLACK_WEBHOOK_URL" => Some("https://hooks.slack.com/hermip".to_string()),
+            "CLAWHIP_SLACK_WEBHOOK_URL" => Some("https://hooks.slack.com/clawhip".to_string()),
+            _ => None,
+        });
+        assert_eq!(
+            config.defaults.webhook_slack.as_deref(),
+            Some("https://hooks.slack.com/hermip"),
+            "HERMIP_SLACK_WEBHOOK_URL should override CLAWHIP_SLACK_WEBHOOK_URL"
+        );
+    }
+
+    #[test]
+    fn hermip_discord_webhook_url_env_override() {
+        // HERMIP_DISCORD_WEBHOOK_URL overrides TOML defaults.webhook_discord.
+        let mut config = config_with_toml_values();
+        config.defaults.webhook_discord = Some("https://discord.com/toml-webhook".to_string());
+        config.apply_hermip_env_overrides_with(|name| {
+            (name == "HERMIP_DISCORD_WEBHOOK_URL")
+                .then(|| "https://discord.com/env-webhook".to_string())
+        });
+        assert_eq!(
+            config.defaults.webhook_discord.as_deref(),
+            Some("https://discord.com/env-webhook"),
+            "HERMIP_DISCORD_WEBHOOK_URL should override TOML"
+        );
+    }
+
+    #[test]
+    fn hermip_slack_webhook_url_env_override() {
+        // HERMIP_SLACK_WEBHOOK_URL overrides TOML defaults.webhook_slack.
+        let mut config = config_with_toml_values();
+        config.defaults.webhook_slack = Some("https://hooks.slack.com/toml".to_string());
+        config.apply_hermip_env_overrides_with(|name| {
+            (name == "HERMIP_SLACK_WEBHOOK_URL").then(|| "https://hooks.slack.com/env".to_string())
+        });
+        assert_eq!(
+            config.defaults.webhook_slack.as_deref(),
+            Some("https://hooks.slack.com/env"),
+            "HERMIP_SLACK_WEBHOOK_URL should override TOML"
+        );
+    }
+
+    #[test]
+    fn empty_hermip_webhook_url_does_not_override() {
+        // Empty HERMIP_DISCORD_WEBHOOK_URL should not override TOML.
+        let mut config = config_with_toml_values();
+        config.defaults.webhook_discord = Some("https://discord.com/toml".to_string());
+        config.apply_hermip_env_overrides_with(|name| {
+            (name == "HERMIP_DISCORD_WEBHOOK_URL").then(|| "  ".to_string())
+        });
+        assert_eq!(
+            config.defaults.webhook_discord.as_deref(),
+            Some("https://discord.com/toml"),
+            "empty HERMIP_DISCORD_WEBHOOK_URL should not override TOML"
+        );
+    }
+
+    #[test]
+    fn webhook_urls_are_masked_in_display_output() {
+        // Webhook URLs must be masked in config show output.
+        let config = AppConfig {
+            defaults: DefaultsConfig {
+                webhook_discord: Some("https://discord.com/api/webhooks/123/secret".into()),
+                webhook_slack: Some("https://hooks.slack.com/services/T/B/secret".into()),
+                ..DefaultsConfig::default()
+            },
+            ..AppConfig::default()
+        };
+        let masked = config.masked();
+        assert_eq!(masked.defaults.webhook_discord.as_deref(), Some("***"));
+        assert_eq!(masked.defaults.webhook_slack.as_deref(), Some("***"));
+    }
+
+    #[test]
+    fn clawhip_daemon_url_fallback_in_daemon_base_url() {
+        // daemon_base_url() should fall back to CLAWHIP_DAEMON_URL when
+        // HERMIP_DAEMON_URL is not set.
+        let config = config_with_toml_values();
+
+        // Set CLAWHIP_DAEMON_URL but not HERMIP_DAEMON_URL.
+        let previous_hermip = std::env::var_os("HERMIP_DAEMON_URL");
+        let previous_clawhip = std::env::var_os("CLAWHIP_DAEMON_URL");
+        unsafe {
+            std::env::remove_var("HERMIP_DAEMON_URL");
+            std::env::set_var("CLAWHIP_DAEMON_URL", "http://clawhip:8888");
+        }
+        assert_eq!(
+            config.daemon_base_url(),
+            "http://clawhip:8888",
+            "CLAWHIP_DAEMON_URL should work as deprecated fallback"
+        );
+
+        // When both are set, HERMIP_* wins.
+        unsafe {
+            std::env::set_var("HERMIP_DAEMON_URL", "http://hermip:9999");
+        }
+        assert_eq!(
+            config.daemon_base_url(),
+            "http://hermip:9999",
+            "HERMIP_DAEMON_URL should override CLAWHIP_DAEMON_URL"
+        );
+
+        // Restore
+        unsafe {
+            if let Some(prev) = previous_hermip {
+                std::env::set_var("HERMIP_DAEMON_URL", prev);
+            } else {
+                std::env::remove_var("HERMIP_DAEMON_URL");
+            }
+            if let Some(prev) = previous_clawhip {
+                std::env::set_var("CLAWHIP_DAEMON_URL", prev);
+            } else {
+                std::env::remove_var("CLAWHIP_DAEMON_URL");
+            }
+        }
+    }
+
+    #[test]
+    fn clawhip_github_token_fallback_in_monitor_github_token() {
+        // monitor_github_token() should fall back to CLAWHIP_GITHUB_TOKEN
+        // when HERMIP_GITHUB_TOKEN is not set.
+        let config = config_with_toml_values();
+
+        let previous_hermip = std::env::var_os("HERMIP_GITHUB_TOKEN");
+        let previous_clawhip = std::env::var_os("CLAWHIP_GITHUB_TOKEN");
+        unsafe {
+            std::env::remove_var("HERMIP_GITHUB_TOKEN");
+            std::env::set_var("CLAWHIP_GITHUB_TOKEN", "ghp_clawhip_token");
+        }
+        assert_eq!(
+            config.monitor_github_token().as_deref(),
+            Some("ghp_clawhip_token"),
+            "CLAWHIP_GITHUB_TOKEN should work as deprecated fallback"
+        );
+
+        // When both are set, HERMIP_* wins.
+        unsafe {
+            std::env::set_var("HERMIP_GITHUB_TOKEN", "ghp_hermip_token");
+        }
+        assert_eq!(
+            config.monitor_github_token().as_deref(),
+            Some("ghp_hermip_token"),
+            "HERMIP_GITHUB_TOKEN should override CLAWHIP_GITHUB_TOKEN"
+        );
+
+        // Restore
+        unsafe {
+            if let Some(prev) = previous_hermip {
+                std::env::set_var("HERMIP_GITHUB_TOKEN", prev);
+            } else {
+                std::env::remove_var("HERMIP_GITHUB_TOKEN");
+            }
+            if let Some(prev) = previous_clawhip {
+                std::env::set_var("CLAWHIP_GITHUB_TOKEN", prev);
+            } else {
+                std::env::remove_var("CLAWHIP_GITHUB_TOKEN");
+            }
+        }
+    }
+
+    #[test]
+    fn validation_passes_with_default_webhook_discord() {
+        // Config validation should pass when defaults.webhook_discord is set
+        // even without a bot token or route webhooks.
+        let mut config = AppConfig::default();
+        config.defaults.webhook_discord =
+            Some("https://discord.com/api/webhooks/123/abc".to_string());
+        assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn is_secret_key_includes_webhook_defaults() {
+        assert!(AppConfig::is_secret_key("defaults.webhook_discord"));
+        assert!(AppConfig::is_secret_key("defaults.webhook_slack"));
     }
 }
