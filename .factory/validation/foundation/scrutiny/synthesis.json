@@ -1,6 +1,6 @@
 {
   "milestone": "foundation",
-  "round": 1,
+  "round": 2,
   "status": "fail",
   "validatorsRun": {
     "test": { "passed": true, "command": "cargo test", "exitCode": 0 },
@@ -8,97 +8,87 @@
     "lint": { "passed": true, "command": "cargo fmt --check", "exitCode": 0 }
   },
   "reviewsSummary": {
-    "total": 5,
-    "passed": 2,
-    "failed": 3,
-    "failedFeatures": ["fork-and-rebrand", "config-system", "event-pipeline-core"]
+    "total": 6,
+    "passed": 4,
+    "failed": 2,
+    "failedFeatures": ["hook-provider-feature-flags", "cross-area-compatibility"]
   },
   "blockingIssues": [
     {
-      "featureId": "fork-and-rebrand",
+      "featureId": "hook-provider-feature-flags",
       "severity": "blocking",
-      "description": "CLAWHIP_ env vars remain as primary names in production code paths (src/config.rs, src/discord.rs, src/source/git.rs, src/source/tmux.rs, src/lifecycle.rs, src/plugins.rs). AGENTS.md states 'No references to clawhip in source code (compat layer comments are OK)'. These are not compat comments — they are primary env var identifiers used in active code."
+      "description": "default_install_providers() returns vec![] in hermes-only builds (src/hooks/mod.rs:565). 'hermip hooks install' and 'hermip hooks install --all' do nothing useful when only the hermes feature is enabled. Hermes is never in the default install list, which is inconsistent with default_uninstall_providers() which correctly includes HookProvider::Hermes in all cfg variants. Fix: include HookProvider::Hermes in default_install_providers() for the hermes-only case (and arguably all cases since Hermes is always a valid provider)."
     },
     {
-      "featureId": "fork-and-rebrand",
+      "featureId": "hook-provider-feature-flags",
       "severity": "blocking",
-      "description": "Codex and ClaudeCode hook providers (HookProvider::Codex, HookProvider::ClaudeCode) and related install/uninstall code remain in src/hooks/mod.rs and src/cli.rs. The feature description explicitly requires removing 'hook code for Codex/Claude'. While the Hermes provider was added, the legacy providers should have been removed or gated behind a feature flag. CLI help text still references Codex/Claude/OMC/OMX."
+      "description": "Hardcoded ingress message (src/hooks/mod.rs:36) lists all provider names '<codex|claude-code|hermes>' regardless of feature flags. In a hermes-only build, this incorrectly tells the user that codex and claude-code are valid --provider values. Should be feature-flag-aware via cfg-gated alternative println! statements or a runtime-constructed provider list."
     },
     {
-      "featureId": "config-system",
+      "featureId": "cross-area-compatibility",
       "severity": "blocking",
-      "description": "Security: `hermip config show` outputs the full config via `to_pretty_toml()` without masking bot tokens, webhook URLs, or GitHub tokens. Mission AGENTS.md explicitly requires 'Mask them in config show output' for secrets. This is a P0 security issue per the project's security requirements."
-    },
-    {
-      "featureId": "config-system",
-      "severity": "blocking",
-      "description": "The `apply_hermip_env_overrides()` function directly calls `env::var()` instead of using the injectable `with<F>` pattern used elsewhere in config.rs. This makes the function untestable in unit tests, and there are zero unit tests for HERMIP_* env var override behavior — a critical feature path with no test coverage."
-    },
-    {
-      "featureId": "event-pipeline-core",
-      "severity": "blocking",
-      "description": "VAL-SOURCE-006 requires that invalid source events be 'rejected with descriptive errors listing valid sources'. Instead, unknown sources are permissively normalized to 'custom'. The test `keeps_unknown_events_as_custom` explicitly verifies this permissive behavior. This diverges from the feature specification, though it may be an intentional design choice (permissive vs strict)."
-    },
-    {
-      "featureId": "event-pipeline-core",
-      "severity": "blocking",
-      "description": "Slack Webhook sink (src/slack.rs) lacks retry/backoff/circuit-breaker/429 handling. The Discord sink has comprehensive resilience (3 retries, jitter, circuit breaker, DLQ), but Slack is fire-and-forget. The feature requirement states 'Discord 429 responses trigger retry with backoff (no event loss)' and 'Circuit breaker opens after sustained failures' — Slack should have equivalent resilience."
+      "description": "Slack route validation rejects valid configs where defaults.webhook_slack is set but no route-level webhook is configured (src/config.rs:937). The validation `if !has_slack_webhook` does not check `self.defaults.webhook_slack.is_some()`, so a config using the new default webhook fallback will fail daemon startup validation. The router (src/router.rs:312-318) correctly falls back to defaults.webhook_slack, but daemon calls config.validate() before starting (src/daemon.rs:48). Fix: change `if !has_slack_webhook` to `if !has_slack_webhook && self.defaults.webhook_slack.is_none()`. Add test validation_passes_with_default_webhook_slack."
     }
   ],
   "appliedUpdates": [
     {
       "target": "library",
-      "description": "Added env var naming convention to environment.md: documented HERMIP_ as primary prefix, CLAWHIP_ as backward-compat, and listed all legacy CLAWHIP_* env vars that remain in production code.",
-      "sourceFeature": "fork-and-rebrand"
+      "description": "Updated architecture.md to clarify Slack resilience differences from Discord: Slack uses HTTP Retry-After header (Discord uses JSON body), Slack retries non-429 errors (Discord does not). Added resilience parity note that constants are identical but Slack is strictly more resilient for non-429 errors.",
+      "sourceFeature": "slack-sink-resilience"
     },
     {
-      "target": "library",
-      "description": "Added HTTP API endpoint documentation to architecture.md: listed all daemon routes (/health, /api/event, /api/native/hook) with legacy aliases, methods, and response codes.",
-      "sourceFeature": "daemon-http-api"
-    },
-    {
-      "target": "library",
-      "description": "Updated sink resilience documentation in architecture.md: clarified Discord sinks have full resilience (retry, circuit breaker, DLQ) while Slack sink is fire-and-forget. Documented DLQ is in-memory only.",
-      "sourceFeature": "event-pipeline-core"
+      "target": "services.yaml",
+      "description": "Added test-features command to services.yaml for testing feature flag combinations (hermes-only, hermes+codex, hermes+claude, all-features). Covers 4 key build configurations.",
+      "sourceFeature": "hook-provider-feature-flags"
     }
   ],
   "suggestedGuidanceUpdates": [
     {
       "target": "AGENTS.md",
-      "suggestion": "Add security convention: all secrets (bot tokens, webhook URLs, GitHub tokens) MUST be masked in `config show` output. Implement masking by replacing secret values with '***' or similar before serialization. This is currently stated in the mission AGENTS.md but not enforced in the code.",
-      "evidence": "config-system review found hermip config show outputs plaintext secrets via to_pretty_toml(). Multiple reviews confirm AGENTS.md requires masking but implementation doesn't do it.",
+      "suggestion": "Add feature flag conventions: (1) New provider variants must be gated behind feature flags in Cargo.toml with #[cfg(feature = \"...\")] attributes on enum variants, constants, and code paths. (2) When gating providers, ensure default_install_providers() and default_uninstall_providers() are consistent across cfg variants — every cfg variant must have at least one installable provider. (3) CLI help text and runtime messages should be feature-flag-aware, not hardcoded. (4) Test key feature combinations before committing: hermes-only, hermes+one-provider, all-features.",
+      "evidence": "hook-provider-feature-flags review found default_install_providers() returns empty vec in hermes-only builds and ingress message hardcodes all provider names regardless of features. These are cfg-related bugs that conventions could prevent.",
       "isSystemic": true
     },
     {
       "target": "AGENTS.md",
-      "suggestion": "Document env var naming convention: HERMIP_ prefix is primary for all new env vars. CLAWHIP_ prefix is backward-compat only. Workers must NOT introduce new CLAWHIP_ variables. Existing CLAWHIP_ variables should be migrated to HERMIP_ primary with CLAWHIP_ fallback where backward compat is needed.",
-      "evidence": "fork-and-rebrand and config-system reviews both flagged that CLAWHIP_ env vars remain as primary names in production code. Three separate reviewers flagged this across different features.",
-      "isSystemic": true
-    },
-    {
-      "target": "AGENTS.md",
-      "suggestion": "Clarify the rebrand boundary: feature 'fork-and-rebrand' specifies removing Codex/Claude code, but HookProvider::Codex and HookProvider::ClaudeCode remain in the codebase. The orchestrator should decide whether the legacy provider enum variants should be removed entirely (breaking change for existing ClawHip users) or retained under a feature flag, and communicate this boundary to workers.",
-      "evidence": "fork-and-rebrand review found HookProvider::Codex and HookProvider::ClaudeCode still exist in src/hooks/mod.rs and src/cli.rs. The CLI help text references Codex/Claude sessions.",
+      "suggestion": "Document the 'Design Decisions' section pattern for ARCHITECTURE.md: When an implementation choice diverges from the initial specification (e.g., permissive vs strict validation), workers should add a '## Design Decisions' section to ARCHITECTURE.md with subheaders per decision, rationale points, and implications. This pattern is now established (unknown source handling decision) but not documented as a convention.",
+      "evidence": "source-validation-design review noted the Design Decisions section pattern is established but not mentioned in AGENTS.md or skill files. Future workers might scatter rationale in code comments instead.",
       "isSystemic": false
     }
   ],
   "rejectedObservations": [
     {
-      "observation": "README.md and SKILL.md still contain extensive clawhip references (140+ occurrences in README, SKILL.md still says name: clawhip).",
-      "reason": "duplicate — this is covered under the fork-and-rebrand blocking issue about incomplete rebrand. Fixing the blocking issues will likely include documentation updates."
+      "observation": "The `with<F: FnMut(&str) -> Option<String>>` injectable env reader pattern should be documented in library.",
+      "reason": "already-documented — environment.md already has an 'Injectable Env-Var Reader Pattern' section listing all four public _with methods and their purpose."
     },
     {
-      "observation": "The {sh:...} dynamic token executes arbitrary shell commands without sandboxing.",
-      "reason": "ambiguous — this is a known design trade-off that is gated by `allow_dynamic_tokens` per route. AGENTS.md already flags this for review. Not blocking for the foundation milestone."
+      "observation": "The `deprecated_fallback()` pattern for CLAWHIP_* backward compat should be documented.",
+      "reason": "already-documented — env-var-migration.md already documents the deprecated fallback pattern comprehensively with testing examples and all CLAWHIP_* mappings."
     },
     {
-      "observation": "DLQ is in-memory only with no persistence across restarts.",
-      "reason": "already-documented — the architecture.md now documents this as a known limitation. Not blocking for foundation milestone."
+      "observation": "The `config_with_toml_values()` test helper should be documented in library.",
+      "reason": "ambiguous — too specific for library documentation. env-var-migration.md already provides testing patterns. The helper is internal to config.rs and may change."
     },
     {
-      "observation": "hermip hooks install --all does NOT include the Hermes provider (selected_providers returns only [Codex, ClaudeCode]).",
-      "reason": "this is a non-blocking bug that is a consequence of the incomplete rebrand (Codex/ClaudeCode providers not yet removed). Fixing the fork-and-rebrand blocking issue would likely address this."
+      "observation": "Two deprecation helpers (deprecated_fallback injectable vs env_var_non_empty_deprecated direct) with different testability should be unified.",
+      "reason": "ambiguous — this requires a design decision about whether all env-dependent code should use the injectable pattern. Both work correctly. Not blocking for foundation milestone."
+    },
+    {
+      "observation": "No centralized deprecation logging facility — eprintln! used at 8+ call sites with no shared macro.",
+      "reason": "ambiguous — would require an architecture decision about whether to introduce a deprecation logging abstraction. Current approach works correctly. Not blocking."
+    },
+    {
+      "observation": "Retry orchestration code is duplicated between Discord and Slack sinks.",
+      "reason": "ambiguous — each sink has API-specific differences (Discord parses JSON body retry_after, Slack parses HTTP header; Discord has bot+webhook clients, Slack has only webhook; Slack has exponential backoff for non-429). A shared abstraction would need to handle these differences. Current duplication is an accepted trade-off."
+    },
+    {
+      "observation": "Valid event kind prefixes should be a structured reference table in library.",
+      "reason": "already-documented — architecture.md already lists valid prefixes in the Design Decisions section with full descriptions and testing notes."
+    },
+    {
+      "observation": "CLAWHIP_* compat layer pattern should be documented in AGENTS.md.",
+      "reason": "already-documented — environment.md and env-var-migration.md already document the naming convention, fallback pattern, and deprecation warnings. Adding to AGENTS.md would be redundant with existing library docs."
     }
   ],
-  "previousRound": null
+  "previousRound": ".factory/validation/foundation/scrutiny/synthesis.json"
 }

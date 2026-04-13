@@ -1,0 +1,56 @@
+{
+  "featureId": "hook-provider-feature-flags",
+  "reviewedAt": "2026-04-13T12:00:00Z",
+  "commitId": "29a6f54",
+  "transcriptSkeletonReviewed": true,
+  "diffReviewed": true,
+  "status": "fail",
+  "codeReview": {
+    "summary": "The feature flags implementation correctly gates Codex and ClaudeCode HookProvider variants, the prompt_deliver module, and the Deliver CLI subcommand behind cfg attributes. All feature combinations build and pass tests. The CLI help text for the Hooks subcommand mentions feature flags. However, there are two blocking issues: (1) default_install_providers() returns an empty vec in hermes-only builds, meaning 'hermip hooks install' and 'hermip hooks install --all' do nothing useful — Hermes is never in the default install list, which is inconsistent with default_uninstall_providers() which correctly includes Hermes in all cfg variants; (2) the install() function's ingress message hardcodes '<codex|claude-code|hermes>' regardless of feature flags, giving incorrect guidance in hermes-only builds.",
+    "issues": [
+      {
+        "file": "src/hooks/mod.rs",
+        "line": 565,
+        "severity": "blocking",
+        "description": "default_install_providers() returns vec![] for the hermes-only cfg (not(codex-hook) and not(claude-hook)). This means 'hermip hooks install' and 'hermip hooks install --all' do nothing useful in hermes-only builds — the Hermes plugin files are never written. By contrast, default_uninstall_providers() correctly includes HookProvider::Hermes in all cfg variants. The fix is to include HookProvider::Hermes in the default_install_providers() for the hermes-only case, and arguably in all cases since Hermes is always a valid provider."
+      },
+      {
+        "file": "src/hooks/mod.rs",
+        "line": 36,
+        "severity": "blocking",
+        "description": "The install() function hardcodes 'Ingress: hermip native hook --provider <codex|claude-code|hermes>' regardless of feature flags. In a hermes-only build, this incorrectly tells the user that codex and claude-code are valid --provider values. This should be feature-flag-aware, either via cfg-gated alternative println! statements or a runtime-constructed provider list."
+      },
+      {
+        "file": "src/cli.rs",
+        "line": 711,
+        "severity": "non_blocking",
+        "description": "HooksCommands::Install description says 'Install provider-native hook forwarding for enabled providers (codex, claude-code, hermes).' The parenthetical list of provider names is static and not feature-flag-aware. In a hermes-only build, it would still list all three names. While clap's ValueEnum correctly filters the --provider options at runtime, the description text is misleading. Consider making the parenthetical dynamic or removing it since the help text already mentions feature flags above."
+      },
+      {
+        "file": "src/cli.rs",
+        "line": 70,
+        "severity": "non_blocking",
+        "description": "The Deliver subcommand description still references 'OMC/OMX wrappers'. While this is gated behind cfg(any(codex-hook, claude-hook)) and won't appear in hermes-only builds, the OMC/OMX naming is a legacy reference from the original ClawHip codebase and should be updated to use current terminology."
+      }
+    ]
+  },
+  "sharedStateObservations": [
+    {
+      "area": "conventions",
+      "observation": "Feature flag gating conventions are now established but not documented in the project-level AGENTS.md. The .factory/library/architecture.md documents the feature flags and gating rules, but the project AGENTS.md doesn't mention that new provider variants should be gated behind feature flags or how to test feature combinations.",
+      "evidence": "AGENTS.md has no mention of feature flags; .factory/library/architecture.md has a 'Feature Flags' section with gating rules"
+    },
+    {
+      "area": "services",
+      "observation": "The services.yaml test/build commands don't account for feature flag combinations. Running just 'cargo test' uses default features (all providers), but the hermes-only build should also be tested. Consider adding test commands for key feature combinations.",
+      "evidence": "services.yaml has 'test: cargo test' and 'build: cargo build --release' — no --no-default-features variants"
+    },
+    {
+      "area": "knowledge",
+      "observation": "The worker verified all feature combinations manually (4 build configs, 4 test configs, 4 clippy configs) but this knowledge isn't captured as reusable test commands. Future workers would need to re-discover which combinations to test.",
+      "evidence": "Handoff verification shows 12 commands testing 4 feature combinations; services.yaml only has 'cargo test' and 'cargo clippy -- -D warnings'"
+    }
+  ],
+  "addressesFailureFrom": ".factory/validation/foundation/scrutiny/reviews/fork-and-rebrand.json",
+  "summary": "The feature flags implementation addresses the original fork-and-rebrand blocking issue by gating Codex/ClaudeCode HookProvider variants behind #[cfg(feature = \"codex-hook\")] and #[cfg(feature = \"claude-hook\")], which was one of the two recommended solutions (remove OR gate). The implementation is thorough — all code paths, constants, tests, and the Deliver subcommand are properly gated. However, there are two blocking bugs: (1) default_install_providers() returns an empty vec in hermes-only builds, meaning 'hermip hooks install' does nothing useful (Hermes is never in the default install list, unlike default_uninstall_providers() which correctly includes Hermes); (2) the install() output message hardcodes all provider names regardless of features. These break the 'Hermes-only builds work correctly' expectation stated in the feature description."
+}

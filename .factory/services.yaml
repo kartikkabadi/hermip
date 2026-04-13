@@ -2,6 +2,7 @@ commands:
   install: cargo build --release
   build: cargo build --release
   test: cargo test
+  test-features: cargo test --no-default-features --features hermes && cargo test --features hermes,codex-hook && cargo test --features hermes,claude-hook && cargo test
   typecheck: cargo clippy -- -D warnings
   lint: cargo fmt --check
 

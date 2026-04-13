@@ -1,0 +1,33 @@
+{
+  "featureId": "source-validation-design",
+  "reviewedAt": "2026-04-13T12:00:00Z",
+  "commitId": "14ca8cd",
+  "transcriptSkeletonReviewed": true,
+  "diffReviewed": true,
+  "status": "pass",
+  "codeReview": {
+    "summary": "The fix feature adequately addresses the original blocking issue from event-pipeline-core (VAL-SOURCE-006). The feature description explicitly allows either approach — rejection with descriptive errors OR documented permissive normalization — and the validation contract (VAL-EVENT-004) accepts either as long as the decision is documented in architecture.md. The worker chose the permissive normalization approach and documented it thoroughly: added a 'Design Decisions' section to ARCHITECTURE.md with 5-point rationale, listed valid event kind prefixes (what would have been in error messages), added a matching section to .factory/library/architecture.md with a new key invariant, added doc comments to the existing keeps_unknown_events_as_custom test, and added two new tests (custom_events_preserve_original_kind_and_source, normalize_event_passes_unknown_kinds_through_unchanged). All 474 tests pass, clippy clean, fmt clean, release build succeeds. The fix is clean, focused, and well-justified.",
+    "issues": [
+      {
+        "file": "ARCHITECTURE.md",
+        "line": 135,
+        "severity": "non_blocking",
+        "description": "The valid event kind prefixes list does not mention Droid source event types (mission.started, feature.completed, validation.passed, worker.started, discovery.issues) which are referenced in the CLI help text (src/cli.rs:59) and example route rules (src/config.rs:2365). These fall through to EventBody::Custom in the typed model, which is consistent with the permissive design decision, but users might expect them to be 'recognized' given they're used in examples. Consider adding a note that Droid/Mission event kinds are routable but not yet in the typed model, or add them to the recognized prefix list."
+      }
+    ]
+  },
+  "sharedStateObservations": [
+    {
+      "area": "conventions",
+      "observation": "The 'Design Decisions' section pattern is now established in ARCHITECTURE.md (section header '## Design decisions' with subheaders per decision). This is a useful pattern for future features where implementation choices diverge from initial specifications. The convention should be documented in AGENTS.md or .factory/library/architecture.md so future workers know to add design decisions here rather than scattering rationale across code comments.",
+      "evidence": "ARCHITECTURE.md:116-139 — new 'Design decisions' section; .factory/library/architecture.md:153-180 — matching section. Neither AGENTS.md nor the skill files mention this pattern."
+    },
+    {
+      "area": "knowledge",
+      "observation": "The valid event kind prefixes (git.*, github.*, tmux.*, agent.*/session.*, workspace.*, custom) are now documented in ARCHITECTURE.md, but only as part of the design decision prose. Workers who need to know what kinds are recognized by the typed model might benefit from a structured reference table in .factory/library/ — similar to how Hermes/Droid event type tables exist in library/architecture.md but without the typed model mapping.",
+      "evidence": "ARCHITECTURE.md:132-137 lists prefixes inline in the design decision; .factory/library/architecture.md has tables for Hermes hook mapping (lines ~90-100) and Droid event types (lines ~115-125) but no unified 'typed model kind → EventBody variant' mapping."
+    }
+  ],
+  "addressesFailureFrom": ".factory/validation/foundation/scrutiny/reviews/event-pipeline-core.json",
+  "summary": "PASS. The source-validation-design fix adequately resolves the original blocking issue from event-pipeline-core. The original review flagged that VAL-SOURCE-006 required rejecting unknown sources with descriptive errors, but the implementation permissively normalized them to Custom. This fix feature's description explicitly allowed either approach (rejection OR documented permissive normalization), and VAL-EVENT-004 in the validation contract accepts either as long as the decision is documented. The worker chose permissive normalization and documented it thoroughly in ARCHITECTURE.md with full rationale (5 points: agent-first extensibility, custom events as first-class, backward compatibility, wildcard routing, explain command), listed valid event kind prefixes (equivalent to what error messages would contain), added a key invariant to library/architecture.md, and added 2 new tests plus doc comments on the existing test. One minor non-blocking issue: the documented valid prefixes don't mention Droid/Mission event types (mission.*, feature.*, etc.) which appear in CLI examples but fall through to Custom in the typed model."
+}

@@ -1,0 +1,56 @@
+{
+  "featureId": "cross-area-compatibility",
+  "reviewedAt": "2026-04-13T00:30:00.000Z",
+  "commitId": "614ac3b",
+  "transcriptSkeletonReviewed": true,
+  "diffReviewed": true,
+  "status": "fail",
+  "codeReview": {
+    "summary": "The cross-area-compatibility feature implements CLAWHIP_* deprecated fallbacks, HERMIP_WEBHOOK_* env vars, and resilience parity tests. However, there is a blocking validation gap: Slack routes with defaults.webhook_slack but no route-level webhook are rejected by config validation, even though the router correctly handles this case. Additionally, there are two non-blocking issues: double deprecation warnings for CLAWHIP_DISCORD_BOT_TOKEN and an incomplete resilience parity claim (Slack retries non-429 errors but Discord does not).",
+    "issues": [
+      {
+        "file": "src/config.rs",
+        "line": 937,
+        "severity": "blocking",
+        "description": "Slack route validation rejects configs where defaults.webhook_slack is set but no route-level webhook/ slack_webhook is configured. The validation at line 937 (`if !has_slack_webhook`) does not check `self.defaults.webhook_slack.is_some()`, so a valid config using the new default webhook fallback will fail validation. The router (src/router.rs:312-318) correctly falls back to defaults.webhook_slack, but the daemon calls config.validate() before starting (src/daemon.rs:48), making this config unusable in practice. The test `validation_passes_with_default_webhook_discord` covers Discord but there is no equivalent `validation_passes_with_default_webhook_slack` test. Fix: change `if !has_slack_webhook` to `if !has_slack_webhook && self.defaults.webhook_slack.is_none()`."
+      },
+      {
+        "file": "src/config.rs",
+        "line": 636,
+        "severity": "non_blocking",
+        "description": "Double deprecation warning for CLAWHIP_DISCORD_BOT_TOKEN. The env var is checked in two code paths: (1) discord_token_from_env_with() called by effective_token() and discord_token_source(), and (2) apply_hermip_env_overrides_with() which also has a CLAWHIP_DISCORD_BOT_TOKEN fallback. When only CLAWHIP_DISCORD_BOT_TOKEN is set, both paths emit a deprecation warning, resulting in two identical warnings on stderr. This is a usability issue, not a correctness bug."
+      },
+      {
+        "file": "src/slack.rs",
+        "line": 103,
+        "severity": "non_blocking",
+        "description": "Resilience parity claim (VAL-CROSS-002) is only partially verified. The test slack_resilience_constants_match_discord checks that the constants are equal, but Slack's send() retries on non-429 errors with exponential backoff (line 103: `if error.retry_after.is_none() && attempt < MAX_ATTEMPTS`), while Discord's send() does NOT retry on non-429 errors — it records to DLQ and returns immediately. The env-var-migration.md documentation correctly notes this difference ('Exponential backoff for non-429 server errors (Slack only)'), but the feature description claims 'resilience parity' which is misleading. Slack is actually MORE resilient than Discord for non-429 errors. The parity test should either assert behavioral parity (not just constant parity) or the claim should be scoped to 'resilience constants parity'."
+      },
+      {
+        "file": "src/native_hooks.rs",
+        "line": 600,
+        "severity": "non_blocking",
+        "description": "CLAWHIP_PROVIDER fallback in JavaScript code (process.env.CLAWHIP_PROVIDER) does not emit a deprecation warning, unlike all Rust code paths. This is an inconsistency in the deprecation strategy — all other CLAWHIP_* fallbacks print 'hermip: warning: env var CLAWHIP_* is deprecated' to stderr, but this JavaScript path silently accepts the legacy var."
+      }
+    ]
+  },
+  "sharedStateObservations": [
+    {
+      "area": "conventions",
+      "observation": "The deprecated_fallback() helper in config.rs uses an injectable get_env closure pattern for testability, while env_var_non_empty_deprecated() reads env vars directly. Two nearly identical helper functions exist for the same purpose but with different testability approaches. The env_var_non_empty_deprecated function is only used in daemon_base_url() and monitor_github_token(), which don't use the injectable pattern. AGENTS.md does not document the convention for when to use injectable vs direct env var reading.",
+      "evidence": "src/config.rs:25 defines env_var_non_empty_deprecated (direct), src/config.rs:32 defines deprecated_fallback (injectable). daemon_base_url() at line 1268 and monitor_github_token() at line 1274 use the direct variant, while apply_hermip_env_overrides_with() uses the injectable variant."
+    },
+    {
+      "area": "knowledge",
+      "observation": "The resilience behavior difference between Discord and Slack sinks is documented in env-var-migration.md but not in architecture.md. architecture.md says 'Slack Webhook sink includes equivalent resilience matching Discord sink behavior' which is misleading since Slack has additional exponential backoff for non-429 errors that Discord lacks. The architecture.md should reflect this asymmetry or the Slack behavior should be backported to Discord.",
+      "evidence": "architecture.md line 'Slack Webhook sink includes equivalent resilience matching Discord sink behavior' vs env-var-migration.md 'Exponential backoff for non-429 server errors (Slack only)'. Discord send() at src/discord.rs:129-142 only retries on 429, Slack send() at src/slack.rs:93-107 retries on both 429 and non-429."
+    },
+    {
+      "area": "conventions",
+      "observation": "CLAWHIP_* deprecation warnings are emitted to stderr via eprintln!(), but there is no centralized deprecation logging facility. If the project later wants to suppress or redirect deprecation warnings, every eprintln call site would need updating. The mission AGENTS.md and project AGENTS.md do not document the deprecation warning convention.",
+      "evidence": "Multiple files use `eprintln!(\"hermip: warning: env var {name} is deprecated; use HERMIP_* equivalent instead\")` — src/config.rs (lines 27, 40, 637, 700, 731, 741), src/discord.rs (line 82), src/dynamic_tokens.rs (line 158), src/lifecycle.rs (line 165), src/plugins.rs (line 109), src/source/git.rs (line 413), src/source/tmux.rs (line 841). No shared constant or macro for the warning format."
+    }
+  ],
+  "addressesFailureFrom": null,
+  "summary": "The cross-area-compatibility feature substantially implements VAL-CROSS-001 (CLAWHIP_* fallbacks) and VAL-CROSS-002 (resilience parity), but has a **blocking bug**: Slack route validation rejects valid configs using defaults.webhook_slack as a fallback webhook. The validation at config.rs:937 requires every Slack route to have a route-level webhook, ignoring the new defaults.webhook_slack field. Since the daemon validates config before starting, this makes the new default webhook feature unusable for Slack routes. Non-blocking issues include double deprecation warnings for CLAWHIP_DISCORD_BOT_TOKEN, missing deprecation warning for CLAWHIP_PROVIDER in JS code, and an incomplete resilience parity claim (constants match but Slack has additional non-429 retry behavior that Discord lacks)."
+}

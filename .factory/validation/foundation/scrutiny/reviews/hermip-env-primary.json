@@ -1,0 +1,33 @@
+{
+  "featureId": "hermip-env-primary",
+  "reviewedAt": "2026-04-13T01:15:00Z",
+  "commitId": "80e35ed",
+  "transcriptSkeletonReviewed": true,
+  "diffReviewed": true,
+  "status": "pass",
+  "codeReview": {
+    "summary": "The hermip-env-primary feature successfully addressed the original blocking issue from the fork-and-rebrand review: CLAWHIP_* env vars are no longer used as primary identifiers in production code paths. Two commits (221301d and 9dd36cc) removed all CLAWHIP_* fallback chains from src/config.rs (env_var_or_fallback→env_var_non_empty, removed CLAWHIP_DAEMON_URL/GITHUB_TOKEN), src/lifecycle.rs (removed CLAWHIP_SKIP_STAR_PROMPT), src/plugins.rs (removed CLAWHIP_PLUGIN_DIR), src/native_hooks.rs (removed CLAWHIP_PROVIDER JS fallback and CLAWHIP_DIR/CLAWHIP_PROJECT_FILE const aliases), src/source/git.rs (removed CLAWHIP_GIT_BIN), src/source/tmux.rs (removed CLAWHIP_TMUX_BIN), src/dynamic_tokens.rs (migrated to HERMIP_TMUX_BIN), src/discord.rs (removed CLAWHIP_DISCORD_API_BASE), and src/hooks/prompt_deliver.rs (migrated test env vars to HERMIP_TMUX_BIN). The follow-up cross-area-compatibility feature (614ac3b) re-introduced CLAWHIP_* as deprecated fallbacks with stderr deprecation warnings — this is a separate feature (VAL-CROSS-001) and does not represent a regression of the fix. HERMIP_* is now primary throughout; CLAWHIP_* is only in deprecated backward-compat fallback paths with explicit warnings. Validation tests cover all 6 VAL-ENV-* assertions across 5 files, testing default, override, and empty/whitespace behavior. One minor inconsistency: the CLAWHIP_PROVIDER fallback in native_hooks.rs embedded JS (line 600) lacks a deprecation warning unlike all other CLAWHIP_* Rust fallbacks, though this was re-added by the cross-area-compatibility feature, not by hermip-env-primary.",
+    "issues": [
+      {
+        "file": "src/native_hooks.rs",
+        "line": 600,
+        "severity": "non_blocking",
+        "description": "CLAWHIP_PROVIDER fallback in embedded JS code lacks a deprecation warning. All Rust-side CLAWHIP_* fallbacks (added by cross-area-compatibility) print 'hermip: warning: env var CLAWHIP_* is deprecated' to stderr, but the JS code simply does `process.env.HERMIP_PROVIDER || process.env.CLAWHIP_PROVIDER || 'unknown'` without any console.warn. This is inconsistent with the deprecation pattern established elsewhere. Note: this was re-introduced by cross-area-compatibility, not by hermip-env-primary — the hermip-env-primary feature correctly removed it entirely."
+      }
+    ]
+  },
+  "sharedStateObservations": [
+    {
+      "area": "conventions",
+      "observation": "The mission's AGENTS.md says 'Prioritize HERMIP_* vars over CLAWHIP_* vars' and 'Never introduce new CLAWHIP_* environment variables', but the project-level AGENTS.md says 'No references to clawhip in source code (compat layer comments are OK)'. After the cross-area-compatibility feature, the compat layer pattern (CLAWHIP_* with deprecation warnings as or_else fallbacks) is well-established but not explicitly documented in either AGENTS.md. The env-var-migration.md library doc does document this pattern thoroughly.",
+      "evidence": "Mission AGENTS.md line: 'Prioritize HERMIP_* vars over CLAWHIP_* vars'; Project AGENTS.md doesn't mention env var naming conventions at all. The deprecated_fallback() and env_var_non_empty_deprecated() helper functions in src/config.rs establish a clear pattern for CLAWHIP_* fallbacks with deprecation warnings."
+    },
+    {
+      "area": "knowledge",
+      "observation": "The env-var-migration.md library doc was updated by cross-area-compatibility to document the deprecated fallback pattern comprehensively, including a testing pattern for env var tests. This is well-maintained and actionable for future workers.",
+      "evidence": ".factory/library/env-var-migration.md lists all HERMIP_* primary vars, all CLAWHIP_* deprecated fallbacks, and provides Rust test templates for both direct env var tests and injectable _with pattern tests."
+    }
+  ],
+  "addressesFailureFrom": ".factory/validation/foundation/scrutiny/reviews/fork-and-rebrand.json",
+  "summary": "PASS. The hermip-env-primary feature successfully resolved the original blocking issue from fork-and-rebrand: CLAWHIP_* env vars are no longer primary identifiers in production code. HERMIP_* is now the sole primary namespace across all 8 affected files. The fix involved replacing env_var_or_fallback() with env_var_non_empty(), removing all CLAWHIP_* .or_else() fallback chains, and adding 6 validation tests covering VAL-ENV-001 through VAL-ENV-006. The subsequent cross-area-compatibility feature re-introduced CLAWHIP_* as deprecated fallbacks with stderr deprecation warnings — this is intentional backward-compat behavior (VAL-CROSS-001) and does not represent a regression. One non-blocking inconsistency: the CLAWHIP_PROVIDER fallback in native_hooks.rs JS code lacks a deprecation warning unlike all Rust-side CLAWHIP_* fallbacks."
+}

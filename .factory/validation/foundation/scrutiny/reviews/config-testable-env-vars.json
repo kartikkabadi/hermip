@@ -1,0 +1,44 @@
+{
+  "featureId": "config-testable-env-vars",
+  "reviewedAt": "2026-04-13T01:45:00Z",
+  "commitId": "199947a",
+  "transcriptSkeletonReviewed": true,
+  "diffReviewed": true,
+  "status": "pass",
+  "codeReview": {
+    "summary": "The fix feature adequately addresses both blocking issues from the original config-system review. (1) `hermip config show` now uses `to_display_toml()` (src/main.rs:306) which delegates to `self.masked().to_pretty_toml()`, masking all secret fields (discord.bot_token, providers.discord.bot_token, monitors.github_token, defaults.webhook_discord, defaults.webhook_slack, routes[].webhook, routes[].slack_webhook) with '***'. Six comprehensive masking tests exist. (2) `apply_hermip_env_overrides_with()` is now public (pub fn) with an injectable `F: FnMut(&str) -> Option<String>` env reader, enabling full unit testing without process env pollution. Over 40 unit tests now exercise all 6 listed HERMIP_* env var overrides plus HERMIP_DISCORD_WEBHOOK_URL and HERMIP_SLACK_WEBHOOK_URL, covering happy-path overrides, empty/whitespace/invalid edge cases, trimming behavior, setting values when TOML is None, multiple simultaneous overrides, partial overrides, no-override preservation, highest-precedence-after-full-load, and CLAWHIP_* backward-compat fallback behavior. The `deprecated_fallback` helper also uses the injectable get_env, maintaining testability of the CLAWHIP_* fallback paths. All tests pass.",
+    "issues": [
+      {
+        "file": "src/config.rs",
+        "line": 3540,
+        "severity": "non_blocking",
+        "description": "No test explicitly verifies the combined path: env var sets a secret (e.g., HERMIP_PROVIDERS_DISCORD_TOKEN) → then to_display_toml() is called → secret is masked. The masking logic and the env override logic are tested independently, and since env overrides set the same config fields that masked() inspects, the combination works correctly. However, an explicit integration test that sets a secret via env override then verifies display masking would provide stronger assurance for this security-critical path."
+      },
+      {
+        "file": "src/config.rs",
+        "line": 199947a,
+        "severity": "non_blocking",
+        "description": "The specific commit 199947a was minimal — it only added the `pub` visibility change and 2 test functions (hermip_daemon_port_overrides_toml, hermip_daemon_port_rejects_invalid_values). The comprehensive test suite (40+ tests) was added by subsequent commits from the hermip-env-primary and cross-area-compatibility features. While the cumulative codebase state fully addresses the original issues, the handoff for this feature claimed '8 unit tests' and 'All HERMIP_* env vars covered', which is accurate for the final state but overstates what this specific commit contributed. Not a code quality issue, just a process observation."
+      }
+    ]
+  },
+  "sharedStateObservations": [
+    {
+      "area": "conventions",
+      "observation": "The `with<F: FnMut(&str) -> Option<String>>` injectable pattern is now consistently used across all env var override paths in config.rs: apply_hermip_env_overrides_with, effective_token_with, discord_token_source_with, and the deprecated_fallback helper. This is a well-established convention in the codebase for making env-dependent code testable. The .factory/library/architecture.md should document this pattern for future workers.",
+      "evidence": "src/config.rs:682-760 (apply_hermip_env_overrides_with), src/config.rs:853-870 (effective_token_with), src/config.rs:876-903 (discord_token_source_with), src/config.rs:38-47 (deprecated_fallback)"
+    },
+    {
+      "area": "conventions",
+      "observation": "The `deprecated_fallback(&mut get_env, \"CLAWHIP_*\")` pattern inside `apply_hermip_env_overrides_with` provides a reusable way to handle CLAWHIP_* backward compatibility with deprecation warnings. This pattern is used for DAEMON_PORT, DAEMON_BASE_URL (via CLAWHIP_DAEMON_URL), PROVIDERS_DISCORD_TOKEN (via CLAWHIP_DISCORD_BOT_TOKEN), DISCORD_WEBHOOK_URL, and SLACK_WEBHOOK_URL. Workers adding new env var overrides should follow this pattern for any legacy var they need to support.",
+      "evidence": "src/config.rs:694-696, 702-704, 724-726, 736-738, 744-746 — each uses .or_else(|| deprecated_fallback(&mut get_env, \"CLAWHIP_*\"))"
+    },
+    {
+      "area": "knowledge",
+      "observation": "The config_with_toml_values() test helper (src/config.rs:2564) creates a minimal AppConfig with non-default TOML values specifically to enable testing that env var overrides take highest precedence. This helper is used by 30+ tests and should be considered the standard test fixture for env override testing. Future workers testing new HERMIP_* overrides should extend this helper rather than creating new ones.",
+      "evidence": "src/config.rs:2559-2578 — config_with_toml_values() sets daemon.port=25294, daemon.base_url, defaults.channel='toml-channel', defaults.format=Compact, providers.discord.bot_token='toml-bot-token', defaults.channel_name='toml-channel-name'"
+    }
+  ],
+  "addressesFailureFrom": ".factory/validation/foundation/scrutiny/reviews/config-system.json",
+  "summary": "PASS — Both original blocking issues from config-system review are adequately addressed in the cumulative codebase state: (1) `hermip config show` now uses `to_display_toml()` which masks all secrets (bot tokens, webhook URLs, GitHub tokens) with '***', verified by 6 comprehensive masking tests; (2) `apply_hermip_env_overrides_with()` is public with injectable env reader, enabling 40+ unit tests covering all HERMIP_* env var overrides, precedence rules, edge cases, and CLAWHIP_* backward-compat fallbacks. The specific commit 199947a was minimal (pub change + 2 tests), but subsequent commits (hermip-env-primary, cross-area-compatibility) filled in the comprehensive test coverage. One non-blocking gap: no test explicitly verifies the combined path of env-var-set-secret → display masking, though the mechanisms are independently tested and work correctly together."
+}

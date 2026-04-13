@@ -1,0 +1,45 @@
+{
+  "featureId": "slack-sink-resilience",
+  "reviewedAt": "2026-04-13T12:00:00Z",
+  "commitId": "13fd8a0",
+  "transcriptSkeletonReviewed": true,
+  "diffReviewed": true,
+  "status": "pass",
+  "codeReview": {
+    "summary": "The Slack sink resilience feature fully addresses the original blocking issue from event-pipeline-core. SlackClient now has comprehensive resilience: 3-retry with jitter, 429 handling via Retry-After HTTP header (correct for Slack API, unlike Discord which parses JSON body), circuit breaker (shared core module, same constants: threshold=3, cooldown=5s), in-memory DLQ (shared core module), and rate limiting (shared RateLimiter). The implementation correctly adapts Discord's patterns to Slack's API conventions (Retry-After header vs JSON body retry_after). 16 new tests cover all resilience scenarios and pass. One notable improvement over Discord: Slack retries non-429 errors (500s, network failures) with exponential backoff, while Discord only retries 429s. This is strictly more resilient. Minor code smells: dead code after the retry loop (unreachable, same as Discord), and record_dlq handles Discord target types with wrong prefix (unreachable code path). Neither affects correctness.",
+    "issues": [
+      {
+        "file": "src/slack.rs",
+        "line": 107,
+        "severity": "non_blocking",
+        "description": "Dead code after the for loop in send_with_resilience — the 'exhausted retries' branch (lines 107-109) is unreachable because every iteration either returns Ok or Err inside the loop. Same pattern exists in Discord sink (src/discord.rs:93). Not a bug, but confusing for future maintainers. Could be removed or converted to a safety assertion."
+      },
+      {
+        "file": "src/slack.rs",
+        "line": 140,
+        "severity": "non_blocking",
+        "description": "record_dlq extracts the target URL/ID and passes it through slack_rate_limit_key(), which unconditionally prefixes with 'slack:webhook:'. If a Discord target somehow reached this code path, it would get an incorrect prefix. However, this code path is unreachable because send() rejects Discord targets before calling send_with_resilience. Code smell but no functional impact."
+      },
+      {
+        "file": "src/slack.rs",
+        "line": 87,
+        "severity": "non_blocking",
+        "description": "Slack retries non-429 errors with exponential backoff (exponential_backoff_for_attempt), while the Discord sink does NOT retry non-429 errors (it falls straight to DLQ). This diverges from the feature description 'matching Discord sink behavior', but it is strictly an improvement — Slack webhooks are more prone to transient 500s, and retrying them prevents unnecessary DLQ entries. The feature's expectedBehavior says 'Slack sink retries on failures with jitter' which is satisfied. Consider documenting this deliberate improvement in architecture.md or a code comment."
+      }
+    ]
+  },
+  "sharedStateObservations": [
+    {
+      "area": "knowledge",
+      "observation": "Slack's rate limiting uses the standard HTTP Retry-After response header, while Discord returns retry_after in the JSON body. This API-specific difference is correctly handled (Slack's parse_retry_after checks headers, Discord's checks body), but it's not documented in architecture.md or any knowledge file. Future workers adding new sinks should know which rate-limit convention to follow for each API.",
+      "evidence": "src/slack.rs:168-185 — parse_retry_after uses headers.get(RETRY_AFTER); src/discord.rs:197-203 — parse_retry_after uses serde_json::from_str on body. Architecture.md only mentions '429 → Retry-After → backoff' generically without specifying per-API convention."
+    },
+    {
+      "area": "conventions",
+      "observation": "The retry orchestration code (retry loop, record_failure/success/allow_request/dlq, state management with Arc<Mutex<State>>) is duplicated between Discord and Slack sinks. The core modules (CircuitBreaker, Dlq, RateLimiter) are shared, but the orchestration is not. A generic 'resilient sender' could be extracted to reduce duplication, but the current approach is acceptable since each sink has API-specific differences (Discord parses JSON body retry_after, Slack parses HTTP header; Discord has bot+webhook clients, Slack has only webhook; Slack has exponential backoff for non-429). Documenting this as an accepted trade-off would help future workers.",
+      "evidence": "src/slack.rs:42-235 (SlackClient with full resilience) mirrors src/discord.rs:31-189 (DiscordClient with full resilience). Both have nearly identical allow_request, rate_limit_delay, record_success, record_failure, record_dlq methods."
+    }
+  ],
+  "addressesFailureFrom": ".factory/validation/foundation/scrutiny/reviews/event-pipeline-core.json",
+  "summary": "PASS. The Slack sink resilience feature fully addresses the original blocking issue: Slack Webhook sink now has comprehensive resilience matching Discord sink behavior. The implementation correctly adapts Discord's resilience patterns to Slack's API conventions (Retry-After HTTP header vs JSON body retry_after). All expected behaviors are implemented: 3-retry with jitter, 429 rate limit handling, circuit breaker (cool-down → probe → resume), in-memory DLQ, and resilience parity with Discord. 16 new tests cover all scenarios and pass. Three non-blocking issues noted: (1) dead code after retry loop (same as Discord), (2) record_dlq handles Discord targets with wrong prefix (unreachable code path), and (3) Slack retries non-429 errors unlike Discord (strict improvement, should be documented as deliberate). The fix adequately addresses the original failure — Slack is no longer fire-and-forget."
+}

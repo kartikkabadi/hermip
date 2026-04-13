@@ -85,11 +85,14 @@ Each sink implements the `Sink` trait:
 - Dead Letter Queue (DLQ) for exhausted retries
 - Best-effort independent delivery (one sink failure doesn't affect others)
 
-**Slack Webhook** sink includes equivalent resilience matching Discord sink behavior:
-- Rate limit handling (429 → Retry-After header → backoff, up to 3 retries)
-- Exponential backoff with jitter for non-429 server errors
+**Slack Webhook** sink includes equivalent resilience to Discord, with additional non-429 retry support:
+- Rate limit handling (429 → HTTP `Retry-After` header → backoff, up to 3 retries)
+  - Note: Slack returns `Retry-After` as an HTTP response header; Discord returns `retry_after` in the JSON body
+- Exponential backoff with jitter for non-429 server errors (500s, network failures) — Discord does NOT retry these
 - Circuit breaker (sustained failures → cool-down → probe → resume)
 - Dead Letter Queue (DLQ) for exhausted retries
+
+**Resilience parity note:** Constants (MAX_ATTEMPTS, JITTER_MS, CIRCUIT_FAILURE_THRESHOLD, CIRCUIT_COOLDOWN_SECS) are identical between Discord and Slack. However, Slack is strictly more resilient because it retries non-429 errors with exponential backoff, while Discord only retries 429 rate-limit responses.
 
 The DLQ is in-memory only — entries are not persisted across daemon restarts.
 
