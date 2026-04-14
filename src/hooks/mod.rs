@@ -235,26 +235,26 @@ fn remove_hermip_hooks_from_file(path: &Path) -> Result<()> {
 }
 
 fn run_install(args: &HooksInstallArgs) -> Result<InstallReport> {
+    ensure_supported_install_scope(args)?;
     let root = resolve_install_root(args)?;
+    let global_hook_script_path = home_dir()?.join(HOOK_SCRIPT);
     let providers = selected_providers(args);
     let mut generated_files = Vec::new();
 
-    let hook_script_path = root.join(HOOK_SCRIPT);
-    write_generated_file(&hook_script_path, generated_hook_script(), args.force)?;
-    generated_files.push(hook_script_path.clone());
-
-    if args.scope == HookInstallScope::Project {
-        let metadata_path = ensure_project_metadata(&root, args.force)?;
-        generated_files.push(metadata_path);
-    }
+    write_generated_file(
+        &global_hook_script_path,
+        generated_hook_script(),
+        args.force,
+    )?;
+    generated_files.push(global_hook_script_path.clone());
 
     for provider in providers {
         let path = match provider {
             #[cfg(feature = "codex-hook")]
-            HookProvider::Codex => write_codex_hooks(&root, &hook_script_path)?,
+            HookProvider::Codex => write_codex_hooks(&root, &global_hook_script_path)?,
             #[cfg(feature = "claude-hook")]
-            HookProvider::ClaudeCode => write_claude_settings(&root, &hook_script_path)?,
-            HookProvider::Hermes => write_hermes_plugin(&root, &hook_script_path)?,
+            HookProvider::ClaudeCode => write_claude_settings(&root, &global_hook_script_path)?,
+            HookProvider::Hermes => write_hermes_plugin(&root, &global_hook_script_path)?,
         };
         generated_files.push(path);
     }
@@ -534,6 +534,24 @@ def config_verify() -> dict:
     except Exception as e:
         return {"ok": False, "error": str(e)}
 "#;
+=======
+fn ensure_supported_install_scope(args: &HooksInstallArgs) -> Result<()> {
+    if args.scope != HookInstallScope::Project {
+        return Ok(());
+    }
+
+    let includes_claude =
+        args.all || args.provider.is_empty() || args.provider.contains(&HookProvider::ClaudeCode);
+    if !includes_claude {
+        return Ok(());
+    }
+
+    Err(anyhow!(
+        "Claude Code provider-native hook forwarding is global-only; Codex may use either ~/.codex/hooks.json or <repo>/.codex/hooks.json with the clawhip bridge in ~/.clawhip"
+    )
+    .into())
+}
+>>>>>>> upstream/main
 
 fn resolve_install_root(args: &HooksInstallArgs) -> Result<PathBuf> {
     match args.scope {
@@ -797,19 +815,101 @@ fn set_executable(path: &Path) -> Result<()> {
 mod tests {
     #![allow(unused_imports)]
     use super::*;
+    use serial_test::serial;
     use tempfile::tempdir;
 
     #[cfg(all(feature = "codex-hook", feature = "claude-hook"))]
     #[test]
-    fn install_project_scope_writes_generic_provider_files() {
+    #[serial]
+    fn install_project_scope_writes_codex_hook_file_and_global_bridge() {
         let dir = tempdir().expect("tempdir");
         // Canonicalize to handle macOS /private/var/folders symlink situation
         let canonical_dir = dir.path().canonicalize().expect("canonicalize");
+        let previous_home = std::env::var_os("HOME");
+        unsafe {
+            std::env::set_var("HOME", dir.path());
+        }
+
         let report = run_install(&HooksInstallArgs {
+            all: false,
+            provider: vec![HookProvider::Codex],
+            scope: HookInstallScope::Project,
+            root: Some(dir.path().to_path_buf()),
+            force: false,
+        })
+        .expect("project-scoped codex install should succeed");
+
+        assert!(
+            report
+                .generated_files
+                .contains(&dir.path().join(HOOK_SCRIPT))
+        );
+        assert!(
+            report
+                .generated_files
+                .contains(&dir.path().join(CODEX_HOOKS_FILE))
+        );
+        assert!(
+            report
+                .generated_files
+                .contains(&dir.path().join(CODEX_HOOKS_FILE))
+        );
+
+        if let Some(previous) = previous_home {
+            unsafe {
+                std::env::set_var("HOME", previous);
+            }
+        } else {
+            unsafe {
+                std::env::remove_var("HOME");
+            }
+        }
+    }
+
+    #[test]
+    fn install_project_scope_rejects_claude() {
+        let dir = tempdir().expect("tempdir");
+        let error = run_install(&HooksInstallArgs {
+            all: false,
+            provider: vec![HookProvider::ClaudeCode],
+            scope: HookInstallScope::Project,
+            root: Some(dir.path().to_path_buf()),
+            force: false,
+        })
+        .expect_err("project-scoped claude install should be rejected");
+
+        assert!(error.to_string().contains("Claude Code"));
+    }
+
+    #[test]
+    fn install_project_scope_rejects_all_when_claude_is_implied() {
+        let dir = tempdir().expect("tempdir");
+        let error = run_install(&HooksInstallArgs {
             all: true,
             provider: Vec::new(),
             scope: HookInstallScope::Project,
             root: Some(canonical_dir.clone()),
+            force: false,
+        })
+        .expect_err("project-scoped all-provider install should be rejected");
+
+        assert!(error.to_string().contains("Claude Code"));
+    }
+
+    #[test]
+    #[serial]
+    fn install_global_scope_writes_provider_files() {
+        let dir = tempdir().expect("tempdir");
+        let previous_home = std::env::var_os("HOME");
+        unsafe {
+            std::env::set_var("HOME", dir.path());
+        }
+
+        let report = run_install(&HooksInstallArgs {
+            all: true,
+            provider: Vec::new(),
+            scope: HookInstallScope::Global,
+            root: Some(dir.path().to_path_buf()),
             force: false,
         })
         .expect("install");
@@ -834,6 +934,16 @@ mod tests {
                 .generated_files
                 .contains(&canonical_dir.join(CLAUDE_SETTINGS_FILE))
         );
+
+        if let Some(previous) = previous_home {
+            unsafe {
+                std::env::set_var("HOME", previous);
+            }
+        } else {
+            unsafe {
+                std::env::remove_var("HOME");
+            }
+        }
     }
 
     #[cfg(feature = "codex-hook")]
@@ -859,8 +969,6 @@ mod tests {
             assert!(document["hooks"][event].is_array(), "missing {event}");
         }
     }
-
-    // --- default_install_providers / default_uninstall_providers tests ---
 
     /// Verify that default_install_providers always includes Hermes.
     /// This test runs under the current feature-flag configuration, ensuring
@@ -925,5 +1033,27 @@ mod tests {
     fn default_install_providers_hermes_only_returns_hermes() {
         let providers = default_install_providers();
         assert_eq!(providers, vec![HookProvider::Hermes]);
+=======
+    #[test]
+    fn write_generated_file_preserves_existing_content_without_force() {
+        let dir = tempdir().expect("tempdir");
+        let path = dir.path().join("generated.mjs");
+        fs::write(&path, "old\n").expect("seed file");
+
+        write_generated_file(&path, "new\n", false).expect("write");
+
+        assert_eq!(fs::read_to_string(&path).expect("read"), "old\n");
+    }
+
+    #[test]
+    fn write_generated_file_overwrites_existing_content_with_force() {
+        let dir = tempdir().expect("tempdir");
+        let path = dir.path().join("generated.mjs");
+        fs::write(&path, "old\n").expect("seed file");
+
+        write_generated_file(&path, "new\n", true).expect("write");
+
+        assert_eq!(fs::read_to_string(&path).expect("read"), "new\n");
+>>>>>>> upstream/main
     }
 }

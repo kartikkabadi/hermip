@@ -722,10 +722,10 @@ pub struct HooksInstallArgs {
     /// Install only the selected provider(s). Repeat to install multiple.
     #[arg(long, value_enum, action = ArgAction::Append)]
     pub provider: Vec<HookProvider>,
-    /// Install at the project root or in the user's global provider config.
-    #[arg(long, value_enum, default_value_t = HookInstallScope::Project)]
+    /// Install into the provider's supported hook config location(s): Codex supports project or global hooks.json; Claude Code is global-only.
+    #[arg(long, value_enum, default_value_t = HookInstallScope::Global)]
     pub scope: HookInstallScope,
-    /// Project root for project-scoped install. Defaults to the current directory.
+    /// Project root for project-scoped Codex install. Ignored for global installs.
     #[arg(long)]
     pub root: Option<PathBuf>,
     /// Overwrite hermip-managed generated files when they already exist.

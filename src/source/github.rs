@@ -343,10 +343,10 @@ async fn poll_ci_statuses(
     .await
     {
         Ok(ci) => {
-            let empty = HashMap::new();
-            let previous_ci = previous.map(|entry| &entry.ci).unwrap_or(&empty);
-            for event in collect_ci_events(repo, &snapshot.repo_name, previous_ci, &ci) {
-                send_event(tx, event).await?;
+            if let Some(previous) = previous {
+                for event in collect_ci_events(repo, &snapshot.repo_name, &previous.ci, &ci) {
+                    send_event(tx, event).await?;
+                }
             }
             Ok(ci)
         }
@@ -1005,13 +1005,10 @@ mod tests {
             .unwrap();
 
         assert_eq!(ci.len(), 1);
-        let event = rx.recv().await.unwrap();
-        assert_eq!(event.canonical_kind(), "github.ci-failed");
-        assert_eq!(event.payload["repo"], json!("claw-code"));
-        assert_eq!(event.payload["workflow"], json!("Rust CI"));
-        assert_eq!(event.payload["branch"], json!("main"));
-        assert_eq!(event.payload["run_id"], json!("24007460067"));
-        assert!(event.payload.get("number").is_none());
+        assert!(
+            rx.try_recv().is_err(),
+            "first poll after startup should prime CI baseline without emitting historical events"
+        );
 
         let req = server.await.unwrap();
         assert!(req.contains("GET /repos/ultraworkers/claw-code/actions/runs?"));

@@ -1,6 +1,22 @@
 # Changelog
 
-## 0.6.5 - 2026-04-10
+## 0.6.7 - 2026-04-12
+
+### Highlights
+
+- fix native hook repo/worktree metadata so worktree prompt-submitted events route with canonical main-repo names instead of branch/worktree leaf names
+- reconcile prompt-submit marker handling between generated native hooks and `clawhip deliver`, storing prompt-submit state at the effective worktree root
+- align Codex hook installation with the official OpenAI contract by supporting both `~/.codex/hooks.json` and `<repo>/.codex/hooks.json` while keeping the clawhip bridge in `~/.clawhip`
+- keep Claude Code provider-native hook installation global-only, with updated operator docs and regression coverage
+- add regression suites for worktree metadata emission, Codex project/global hook detection, prompt-deliver marker reconciliation, and install-scope rejection
+
+### Upgrade notes
+
+- crate version is now `0.6.7`
+- rerun `clawhip hooks install --provider codex --scope global --force` (or `--scope project` per-repo) and `clawhip hooks install --provider claude-code --scope global --force` to refresh existing hook files
+- existing route/config schema remains compatible; no migration required
+
+## 0.6.6 - 2026-04-10
 
 ### Highlights
 
@@ -13,10 +29,6 @@
 
 - crate version is now `0.6.5`
 - existing config remains compatible; no migration required
-
-## Unreleased
-
-## 0.6.6 - 2026-04-10
 
 ### Highlights
 
@@ -36,8 +48,6 @@
 
 - drift audit: `clawhip config verify-bindings` (text) or `--json` for CI. Exit code is non-zero on any failed binding.
 - bind a repo to a Discord channel safely: `clawhip setup --bind oh-my-codex=1480171106324189335 --expect-name oh-my-codex=omx-dev`. Clawhip resolves the channel live, prints `bind: oh-my-codex -> 1480171106324189335 (#omx-dev)`, and writes `[[routes]] filter = { repo = "oh-my-codex" }, channel = "…", channel_name = "omx-dev"`. Name mismatches and 404s abort before the write.
-
-- bind a repo to a Discord channel safely: `clawhip setup --bind oh-my-codex=1480171106324189335 --expect-name oh-my-codex=omx-dev`. Clawhip resolves the channel live, prints `bind: oh-my-codex -> 1480171106324189335 (#omx-dev)`, and writes `[[routes]] filter = { repo = "oh-my-codex" }, channel = "…", channel_name = "omx-dev"`. Name mismatches and 404s abort before the write.
 - run `clawhip release preflight` locally in the repo root before tagging — omit the version to default to the current `Cargo.toml` version, or pass an explicit tag (`clawhip release preflight v0.6.5`, `clawhip release preflight refs/tags/v0.6.5`)
 - the same command runs in CI via the new `preflight` job gating the release workflow
 
@@ -47,7 +57,7 @@
 
 - replace provider-specific wrapper/launcher docs with the shared provider-native Codex + Claude hook surface
 - document `clawhip native hook` as the generic ingress for shared hook payload verification
-- move public guidance to provider-native installation, `.hermip/project.json`, and additive `.hermip/hooks/` augmentation
+- move public guidance to provider-native installation, git-derived repo/worktree routing identity, and additive `.hermip/project.json` and `.hermip/hooks/` augmentation
 
 ### Highlights
 

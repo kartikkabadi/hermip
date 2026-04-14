@@ -703,6 +703,19 @@ mod tests {
 
     #[tokio::test]
     async fn post_native_hook_accepts_codex_payload_and_queues_normalized_event() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let repo = temp.path().join("clawhip");
+        std::fs::create_dir_all(&repo).expect("create repo");
+        let git = std::process::Command::new("git")
+            .args(["init"])
+            .current_dir(&repo)
+            .output()
+            .expect("git init");
+        assert!(
+            git.status.success(),
+            "git init failed: {}",
+            String::from_utf8_lossy(&git.stderr)
+        );
         let (tx, mut rx) = mpsc::channel(1);
         let state = AppState {
             config: Arc::new(AppConfig::default()),

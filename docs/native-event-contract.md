@@ -40,16 +40,16 @@ surface.
 
 ## Stable base routing fields
 
-When the provider payload and project metadata make them available, clawhip preserves these base
+When the provider payload and git repo/worktree context make them available, clawhip preserves these base
 fields for routing:
 
 - `provider`
 - `event`
 - `session_id`
 - `directory`
+- `repo_path`
 - `worktree_path`
 - `repo_name`
-- `project`
 - `branch`
 - `tool_name`
 - `command`
@@ -58,9 +58,11 @@ fields for routing:
 
 ### Notes
 
-- `.hermip/project.json` is the preferred place for project identity that should survive across
-  providers.
+- `repo_path` and `worktree_path` are the authoritative routing identity.
+- `repo_name` is convenience metadata only; it must not be the sole collision breaker across repos.
+- `.hermip/project.json` is the preferred place for project identity that should survive across providers.
 - `project` / `repo_name` should be the authority for project-level routing.
+- Inputs outside a git repo/worktree normalize to an explicit `non_git` outcome and are dropped before route evaluation or delivery.
 - `directory` and `worktree_path` are base context, not optional decorations.
 - Tool-specific metadata is additive; it should not replace core routing fields.
 
@@ -87,10 +89,13 @@ Prefer filters on structured metadata such as:
 
 - `provider`
 - `event`
+- `worktree_path`
+- `repo_path`
 - `repo_name`
-- `project`
 - `branch`
 - `tool_name`
+
+Use `repo_name` / `project` only as secondary convenience filters after the path-based routing keys.
 
 Avoid routing on rendered message text.
 
@@ -99,7 +104,7 @@ Recommended route shape:
 ```toml
 [[routes]]
 event = "native.*"
-filter = { provider = "codex", project = "clawhip" }
+filter = { provider = "codex", repo_path = "*/clawhip" }
 channel = "1480171113253175356"
 format = "compact"
 ```
@@ -115,11 +120,12 @@ Default clawhip formatting should stay low-noise:
 
 ## Migration note
 
-Provider-native configuration is now the supported setup path.
+Provider-native global configuration is now the supported setup path.
 
-1. Codex or Claude owns hook registration plus scope precedence
+1. Codex or Claude owns hook registration through the canonical global shared-surface install
 2. clawhip ingests the provider payload through `hermip native hook`
-3. clawhip loads project metadata plus additive augmenters
+3. clawhip derives routing identity from git repo/worktree context and loads project metadata plus additive augmenters
 4. clawhip owns channel routing, mentions, formatting, and delivery
 
-That keeps notification policy in one place and avoids duplicated integrations.
+Legacy repo-local generated hook config/state is no longer supported; `clawhip hooks install --scope project`
+now warns and directs users to rerun the global install path without generating repo-local state.

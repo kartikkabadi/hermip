@@ -14,6 +14,7 @@ pub const DEFAULT_MAX_ENTERS: u32 = 4;
 const DEFAULT_TUI_TIMEOUT: Duration = Duration::from_secs(30);
 const DEFAULT_POLL_INTERVAL: Duration = Duration::from_millis(500);
 const DEFAULT_VERIFY_DELAY: Duration = Duration::from_millis(350);
+const DEFAULT_PROGRESS_TIMEOUT: Duration = Duration::from_secs(4);
 const PROMPT_SUBMIT_MARKER: &str = ".hermip/state/prompt-submit.json";
 const NATIVE_HOOK_SCRIPT: &str = ".hermip/hooks/native-hook.mjs";
 const PROMPT_CHARS: &[char] = &['$', '%', '>', '#', '❯', '›'];
@@ -28,6 +29,7 @@ pub struct PromptDeliverConfig {
     pub tui_timeout: Duration,
     pub poll_interval: Duration,
     pub verify_delay: Duration,
+    pub progress_timeout: Duration,
 }
 
 impl PromptDeliverConfig {
@@ -39,6 +41,7 @@ impl PromptDeliverConfig {
             tui_timeout: DEFAULT_TUI_TIMEOUT,
             poll_interval: DEFAULT_POLL_INTERVAL,
             verify_delay: DEFAULT_VERIFY_DELAY,
+            progress_timeout: DEFAULT_PROGRESS_TIMEOUT,
         }
     }
 }
@@ -52,6 +55,7 @@ impl From<DeliverArgs> for PromptDeliverConfig {
             tui_timeout: DEFAULT_TUI_TIMEOUT,
             poll_interval: DEFAULT_POLL_INTERVAL,
             verify_delay: DEFAULT_VERIFY_DELAY,
+            progress_timeout: DEFAULT_PROGRESS_TIMEOUT,
         }
     }
 }
@@ -90,6 +94,13 @@ struct HookSetup {
     marker_path: PathBuf,
     supported_providers: Vec<ProviderKind>,
     sources: Vec<&'static str>,
+    install_scope: HookDetectionScope,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum HookDetectionScope {
+    Project,
+    Global,
 }
 
 #[derive(Debug, Clone)]
@@ -125,26 +136,39 @@ pub async fn run(args: DeliverArgs) -> Result<()> {
 }
 
 pub async fn deliver(config: &PromptDeliverConfig) -> Result<DeliveryResult> {
-    let pane = resolve_target_pane(&config.session).await?;
+    let mut pane = resolve_target_pane(&config.session).await?;
     let hook_setup = detect_hook_setup(&pane.cwd)?;
-    let provider = detect_active_provider(&pane, &hook_setup).await?;
+    let provider = ensure_provider_ready(&mut pane, &hook_setup, config).await?;
+    let marker_path = effective_marker_path(&hook_setup, &pane.cwd);
+    let effective_workdir = effective_workdir(&hook_setup, &pane.cwd);
 
     wait_for_tui_ready(&pane.pane_id, config.tui_timeout, config.poll_interval).await?;
 
-    let baseline_marker = read_marker_hash(&hook_setup.marker_path)?;
+    let baseline_marker = read_marker_hash(&marker_path)?;
+    if hook_setup.install_scope == HookDetectionScope::Global {
+        ensure_global_workdir_marker(&marker_path)?;
+    }
     send_literal_keys(&pane.pane_id, &config.prompt).await?;
+    let baseline_pane = capture_pane_hash(&pane.pane_id).await.ok();
 
     for attempt in 1..=config.max_enters.max(1) {
         send_key(&pane.pane_id, "Enter").await?;
         sleep(config.verify_delay).await;
 
-        if marker_changed(&hook_setup.marker_path, baseline_marker)? {
+        if marker_changed(&marker_path, baseline_marker)? {
+            wait_for_progress_signal(
+                &pane.pane_id,
+                baseline_pane,
+                config.progress_timeout,
+                config.poll_interval,
+            )
+            .await?;
             return Ok(DeliveryResult {
                 delivered: true,
                 enter_attempts: attempt,
                 provider,
                 pane_id: pane.pane_id,
-                workdir: hook_setup.workdir,
+                workdir: effective_workdir,
             });
         }
     }
@@ -156,7 +180,7 @@ pub async fn deliver(config: &PromptDeliverConfig) -> Result<DeliveryResult> {
         config.max_enters.max(1),
         provider.label(),
         PROMPT_SUBMIT_MARKER,
-        hook_setup.marker_path.display(),
+        marker_path.display(),
         pane.current_command,
         hook_setup.sources.join(", "),
         format_last_line(&last_line),
@@ -238,6 +262,32 @@ fn detect_hook_setup(cwd: &Path) -> Result<HookSetup> {
             return Ok(HookSetup {
                 workdir: directory.to_path_buf(),
                 marker_path: directory.join(PROMPT_SUBMIT_MARKER),
+                supported_providers: providers,
+                sources,
+            });
+        }
+    }
+
+    if let Some(home) = std::env::var_os("HOME").map(PathBuf::from) {
+        let mut providers = Vec::new();
+        let mut sources = Vec::new();
+        let has_native_script = has_native_prompt_submit_hook_script(&home);
+
+        #[cfg(feature = "claude-hook")]
+        if has_claude_prompt_submit_hook(&home) && has_native_script {
+            providers.push(ProviderKind::Omc);
+            sources.push("~/.claude/settings.json + ~/.hermip/hooks/native-hook.mjs");
+        }
+        #[cfg(feature = "codex-hook")]
+        if has_codex_prompt_submit_hook(&home) && has_native_script {
+            providers.push(ProviderKind::Omx);
+            sources.push("~/.codex/hooks.json + ~/.hermip/hooks/native-hook.mjs");
+        }
+
+        if !providers.is_empty() {
+            return Ok(HookSetup {
+                workdir: home,
+                marker_path: home.join(PROMPT_SUBMIT_MARKER),
                 supported_providers: providers,
                 sources,
             });
@@ -377,6 +427,124 @@ async fn detect_active_provider(pane: &PaneTarget, hook_setup: &HookSetup) -> Re
     .into())
 }
 
+async fn ensure_provider_ready(
+    pane: &mut PaneTarget,
+    hook_setup: &HookSetup,
+    config: &PromptDeliverConfig,
+) -> Result<ProviderKind> {
+    if let Ok(provider) = detect_active_provider(pane, hook_setup).await {
+        return Ok(provider);
+    }
+
+    let provider = infer_provider_from_hook_setup(hook_setup)?;
+    try_resume_provider(pane, provider, config).await?;
+    *pane = resolve_target_pane(&pane.session).await?;
+    detect_active_provider(pane, hook_setup).await
+}
+
+fn infer_provider_from_hook_setup(hook_setup: &HookSetup) -> Result<ProviderKind> {
+    if hook_setup.supported_providers.len() == 1 {
+        Ok(hook_setup.supported_providers[0])
+    } else {
+        Err("refusing delivery: multiple providers configured for this workdir; cannot infer which one to resume safely".into())
+    }
+}
+
+async fn try_resume_provider(
+    pane: &PaneTarget,
+    provider: ProviderKind,
+    config: &PromptDeliverConfig,
+) -> Result<()> {
+    let resume = build_resume_command(pane, provider).await?;
+    send_literal_keys(&pane.pane_id, &resume).await?;
+    send_key(&pane.pane_id, "Enter").await?;
+    wait_for_provider_prompt(
+        &pane.pane_id,
+        provider,
+        config.tui_timeout,
+        config.poll_interval,
+    )
+    .await
+}
+
+async fn build_resume_command(pane: &PaneTarget, provider: ProviderKind) -> Result<String> {
+    let process_tree = read_process_tree(pane.pane_pid).await.unwrap_or_default();
+    if let Some(resume) = process_tree
+        .iter()
+        .find_map(|process| extract_resume_command(process, provider))
+    {
+        return Ok(resume);
+    }
+
+    let binary = match provider {
+        ProviderKind::Omc => "omc",
+        ProviderKind::Omx => "omx",
+    };
+    Ok(binary.into())
+}
+
+fn extract_resume_command(process: &ProcessInfo, provider: ProviderKind) -> Option<String> {
+    let args = process.args.trim();
+    if args.is_empty() || !provider_matches_command(provider, &process.args.to_ascii_lowercase()) {
+        return None;
+    }
+
+    if let Some(idx) = args.find(" resume ") {
+        return Some(args[idx + 1..].trim().to_string());
+    }
+    if args.starts_with("resume ") {
+        return Some(args.to_string());
+    }
+    None
+}
+
+async fn wait_for_provider_prompt(
+    target: &str,
+    provider: ProviderKind,
+    timeout: Duration,
+    poll_interval: Duration,
+) -> Result<()> {
+    let deadline = tokio::time::Instant::now() + timeout;
+
+    loop {
+        if tokio::time::Instant::now() >= deadline {
+            return Ok(());
+        }
+
+        if pane_looks_like_provider(target, provider).await {
+            return Ok(());
+        }
+
+        sleep(poll_interval).await;
+    }
+}
+
+async fn pane_looks_like_provider(target: &str, provider: ProviderKind) -> bool {
+    let output = Command::new(tmux_bin())
+        .arg("capture-pane")
+        .arg("-p")
+        .arg("-t")
+        .arg(target)
+        .arg("-S")
+        .arg("-40")
+        .output()
+        .await;
+    let Ok(output) = output else {
+        return false;
+    };
+    if !output.status.success() {
+        return false;
+    }
+
+    let text = String::from_utf8_lossy(&output.stdout).to_ascii_lowercase();
+    match provider {
+        ProviderKind::Omc => text.contains("claude") || text.contains("omc"),
+        ProviderKind::Omx => {
+            text.contains("openai codex") || text.contains("gpt-5.4") || text.contains("omx")
+        }
+    }
+}
+
 fn provider_matches_command(provider: ProviderKind, command: &str) -> bool {
     let aliases = match provider {
         #[cfg(feature = "claude-hook")]
@@ -480,6 +648,52 @@ fn read_marker_hash(path: &Path) -> Result<Option<u64>> {
     Ok(Some(content_hash(&fs::read_to_string(path)?)))
 }
 
+fn ensure_global_workdir_marker(marker_path: &Path) -> Result<()> {
+    if let Some(parent) = marker_path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    Ok(())
+}
+
+fn effective_workdir(hook_setup: &HookSetup, pane_cwd: &Path) -> PathBuf {
+    if hook_setup.install_scope != HookDetectionScope::Global {
+        return hook_setup.workdir.clone();
+    }
+
+    infer_worktree_root(pane_cwd).unwrap_or_else(|| pane_cwd.to_path_buf())
+}
+
+fn effective_marker_path(hook_setup: &HookSetup, pane_cwd: &Path) -> PathBuf {
+    effective_workdir(hook_setup, pane_cwd).join(PROMPT_SUBMIT_MARKER)
+}
+
+fn infer_worktree_root(directory: &Path) -> Option<PathBuf> {
+    let output = std::process::Command::new("git")
+        .args([
+            "-C",
+            &directory.display().to_string(),
+            "rev-parse",
+            "--show-toplevel",
+        ])
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+
+    let root = String::from_utf8(output.stdout).ok()?;
+    let trimmed = root.trim();
+    if trimmed.is_empty() {
+        None
+    } else {
+        Some(
+            PathBuf::from(trimmed)
+                .canonicalize()
+                .unwrap_or_else(|_| PathBuf::from(trimmed)),
+        )
+    }
+}
+
 fn marker_changed(path: &Path, baseline: Option<u64>) -> Result<bool> {
     let current = read_marker_hash(path)?;
     Ok(match (baseline, current) {
@@ -487,6 +701,39 @@ fn marker_changed(path: &Path, baseline: Option<u64>) -> Result<bool> {
         (Some(before), Some(after)) => before != after,
         _ => false,
     })
+}
+
+async fn wait_for_progress_signal(
+    target: &str,
+    baseline_hash: Option<u64>,
+    timeout: Duration,
+    poll_interval: Duration,
+) -> Result<()> {
+    let deadline = tokio::time::Instant::now() + timeout;
+
+    loop {
+        if let Some(before) = baseline_hash {
+            if let Ok(current) = capture_pane_hash(target).await
+                && current != before
+            {
+                return Ok(());
+            }
+        } else if capture_pane_hash(target).await.is_ok() {
+            return Ok(());
+        }
+
+        if tokio::time::Instant::now() >= deadline {
+            let last_line = capture_last_line(target).await.unwrap_or_default();
+            return Err(format!(
+                "prompt submit recorded, but no bounded progress signal appeared within {:?} (last line: {})",
+                timeout,
+                format_last_line(&last_line),
+            )
+            .into());
+        }
+
+        sleep(poll_interval).await;
+    }
 }
 
 async fn wait_for_tui_ready(
@@ -537,6 +784,22 @@ async fn capture_last_line(target: &str) -> Result<String> {
     Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
 }
 
+async fn capture_pane_hash(target: &str) -> Result<u64> {
+    let output = Command::new(tmux_bin())
+        .arg("capture-pane")
+        .arg("-p")
+        .arg("-t")
+        .arg(target)
+        .arg("-S")
+        .arg("-200")
+        .output()
+        .await?;
+    if !output.status.success() {
+        return Err(tmux_stderr(&output.stderr).into());
+    }
+    Ok(content_hash(&String::from_utf8(output.stdout)?))
+}
+
 async fn send_literal_keys(target: &str, text: &str) -> Result<()> {
     let output = Command::new(tmux_bin())
         .arg("send-keys")
@@ -582,6 +845,7 @@ fn tmux_stderr(stderr: &[u8]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serial_test::serial;
     use std::os::unix::fs::PermissionsExt;
     use tempfile::tempdir;
 
@@ -610,6 +874,7 @@ mod tests {
         assert_eq!(config.tui_timeout, Duration::from_secs(30));
         assert_eq!(config.poll_interval, Duration::from_millis(500));
         assert_eq!(config.verify_delay, Duration::from_millis(350));
+        assert_eq!(config.progress_timeout, Duration::from_secs(4));
     }
 
     #[cfg(feature = "codex-hook")]
@@ -639,7 +904,8 @@ mod tests {
 
     #[cfg(feature = "claude-hook")]
     #[test]
-    fn detect_hook_setup_recognizes_omc_user_prompt_submit_hooks() {
+    #[serial]
+    fn detect_hook_setup_recognizes_project_codex_hooks_with_global_bridge() {
         let tempdir = tempdir().expect("tempdir");
         let repo = tempdir.path().join("repo");
         fs::create_dir_all(repo.join(".claude")).expect("create claude dir");
@@ -648,22 +914,141 @@ mod tests {
             repo.join(".claude/settings.json"),
             r#"{"hooks":{"UserPromptSubmit":[{"hooks":[{"type":"command","command":"node ./.hermip/hooks/native-hook.mjs --provider claude-code"}]}]}}"#,
         )
-        .expect("write settings");
+        .expect("write codex hooks");
         fs::write(
             repo.join(".hermip/hooks/native-hook.mjs"),
             "function maybeWritePromptSubmitState() { return '.hermip/state/prompt-submit.json'; }\n",
         )
         .expect("write native hook");
 
-        let setup = detect_hook_setup(&repo).expect("hook setup");
-        assert_eq!(setup.supported_providers, vec![ProviderKind::Omc]);
+        let previous_home = std::env::var_os("HOME");
+        unsafe {
+            std::env::set_var("HOME", &fake_home);
+        }
+
+        let setup = detect_hook_setup(&nested).expect("hook setup");
+        assert_eq!(setup.workdir, repo);
+        assert_eq!(setup.supported_providers, vec![ProviderKind::Omx]);
+        assert_eq!(setup.install_scope, HookDetectionScope::Project);
+
+        if let Some(previous) = previous_home {
+            unsafe {
+                std::env::set_var("HOME", previous);
+            }
+        } else {
+            unsafe {
+                std::env::remove_var("HOME");
+            }
+        }
     }
 
     #[cfg(feature = "codex-hook")]
     #[test]
+    #[serial]
+    fn detect_hook_setup_uses_global_codex_install() {
+        let tempdir = tempdir().expect("tempdir");
+        let repo = tempdir.path().join("repo");
+        let nested = repo.join("src/bin");
+        let fake_home = tempdir.path().join("home");
+        fs::create_dir_all(fake_home.join(".codex")).expect("create codex dir");
+        fs::create_dir_all(fake_home.join(".clawhip/hooks")).expect("create hook dir");
+        fs::create_dir_all(&nested).expect("create nested dir");
+        let command = format!(
+            "node {} --provider codex",
+            shell_escape_path(&fake_home.join(".clawhip/hooks/native-hook.mjs"))
+        );
+        fs::write(
+            fake_home.join(".codex/hooks.json"),
+            format!(
+                r#"{{"hooks":{{"UserPromptSubmit":[{{"hooks":[{{"type":"command","command":"{command}"}}]}}]}}}}"#
+            ),
+        )
+        .expect("write codex hooks");
+        fs::write(
+            fake_home.join(".clawhip/hooks/native-hook.mjs"),
+            "function maybeWritePromptSubmitState() { return '.clawhip/state/prompt-submit.json'; }\n",
+        )
+        .expect("write native hook");
+
+        let previous_home = std::env::var_os("HOME");
+        unsafe {
+            std::env::set_var("HOME", &fake_home);
+        }
+
+        let setup = detect_hook_setup(&nested).expect("hook setup");
+        assert_eq!(setup.workdir, fake_home);
+        assert_eq!(setup.supported_providers, vec![ProviderKind::Omx]);
+        assert_eq!(setup.install_scope, HookDetectionScope::Global);
+
+        if let Some(previous) = previous_home {
+            unsafe {
+                std::env::set_var("HOME", previous);
+            }
+        } else {
+            unsafe {
+                std::env::remove_var("HOME");
+            }
+        }
+    }
+
+    #[test]
+    #[serial]
+    fn detect_hook_setup_uses_global_claude_install() {
+        let tempdir = tempdir().expect("tempdir");
+        let repo = tempdir.path().join("repo/src");
+        let fake_home = tempdir.path().join("home");
+        fs::create_dir_all(fake_home.join(".claude")).expect("create claude dir");
+        fs::create_dir_all(fake_home.join(".clawhip/hooks")).expect("create hook dir");
+        fs::create_dir_all(&repo).expect("create repo dir");
+        let command = format!(
+            "node {} --provider claude-code",
+            shell_escape_path(&fake_home.join(".clawhip/hooks/native-hook.mjs"))
+        );
+        fs::write(
+            fake_home.join(".claude/settings.json"),
+            format!(
+                r#"{{"hooks":{{"UserPromptSubmit":[{{"hooks":[{{"type":"command","command":"{command}"}}]}}]}}}}"#
+            ),
+        )
+        .expect("write settings");
+        fs::write(
+            fake_home.join(".clawhip/hooks/native-hook.mjs"),
+            "function maybeWritePromptSubmitState() { return '.clawhip/state/prompt-submit.json'; }\n",
+        )
+        .expect("write native hook");
+
+        let previous_home = std::env::var_os("HOME");
+        unsafe {
+            std::env::set_var("HOME", &fake_home);
+        }
+
+        let setup = detect_hook_setup(&repo).expect("hook setup");
+        assert_eq!(setup.workdir, fake_home);
+        assert_eq!(setup.supported_providers, vec![ProviderKind::Omc]);
+        assert_eq!(setup.install_scope, HookDetectionScope::Global);
+
+        if let Some(previous) = previous_home {
+            unsafe {
+                std::env::set_var("HOME", previous);
+            }
+        } else {
+            unsafe {
+                std::env::remove_var("HOME");
+            }
+        }
+    }
+
+    #[test]
+    #[serial]
     fn detect_hook_setup_rejects_old_omx_bridge_without_prompt_submit_support() {
         let tempdir = tempdir().expect("tempdir");
         let repo = tempdir.path().join("repo");
+        let fake_home = tempdir.path().join("home");
+        fs::create_dir_all(&fake_home).expect("create fake home");
+        let previous_home = std::env::var_os("HOME");
+        unsafe {
+            std::env::set_var("HOME", &fake_home);
+        }
         let hook_dir = repo.join(".omx/hooks");
         fs::create_dir_all(&hook_dir).expect("create hook dir");
         fs::write(
@@ -674,6 +1059,16 @@ mod tests {
 
         let error = detect_hook_setup(&repo).expect_err("old bridge should be rejected");
         assert!(error.to_string().contains("prompt-submit-aware hook setup"));
+
+        if let Some(previous) = previous_home {
+            unsafe {
+                std::env::set_var("HOME", previous);
+            }
+        } else {
+            unsafe {
+                std::env::remove_var("HOME");
+            }
+        }
     }
 
     #[test]
@@ -706,8 +1101,47 @@ mod tests {
     }
 
     #[cfg(feature = "codex-hook")]
+    #[test]
+    fn extract_resume_command_prefers_resume_tail_for_omx() {
+        let process = ProcessInfo {
+            pid: 42,
+            ppid: 1,
+            command: "codex".into(),
+            args: "codex resume 019d7ac0-c822-7ab0-9edf-d76ec22288da".into(),
+        };
+
+        assert_eq!(
+            extract_resume_command(&process, ProviderKind::Omx).as_deref(),
+            Some("resume 019d7ac0-c822-7ab0-9edf-d76ec22288da")
+        );
+    }
+
+    #[test]
+    fn infer_provider_from_hook_setup_requires_single_provider() {
+        let setup = HookSetup {
+            workdir: PathBuf::from("/tmp/repo"),
+            marker_path: PathBuf::from("/tmp/repo/.clawhip/state/prompt-submit.json"),
+            supported_providers: vec![ProviderKind::Omx],
+            sources: vec![
+                "~/.codex/hooks.json or ~/.codex/config.toml + ~/.clawhip/hooks/native-hook.mjs",
+            ],
+            install_scope: HookDetectionScope::Global,
+        };
+        assert_eq!(
+            infer_provider_from_hook_setup(&setup).unwrap(),
+            ProviderKind::Omx
+        );
+
+        let dual = HookSetup {
+            supported_providers: vec![ProviderKind::Omc, ProviderKind::Omx],
+            ..setup
+        };
+        assert!(infer_provider_from_hook_setup(&dual).is_err());
+    }
+
     #[tokio::test]
-    async fn deliver_retries_enter_until_prompt_submit_marker_changes() {
+    #[serial]
+    async fn deliver_fails_when_prompt_submit_records_but_pane_shows_no_progress() {
         let tempdir = tempdir().expect("tempdir");
         let workdir = tempdir.path().join("repo");
         fs::create_dir_all(workdir.join(".codex")).expect("create codex dir");
@@ -720,6 +1154,94 @@ mod tests {
         fs::write(
             workdir.join(".hermip/hooks/native-hook.mjs"),
             "function maybeWritePromptSubmitState() { return '.hermip/state/prompt-submit.json'; }\n",
+        )
+        .expect("write native hook");
+
+        let state_dir = tempdir.path().join("fake-tmux-idle");
+        fs::create_dir_all(&state_dir).expect("create fake state dir");
+        let marker_path = workdir.join(PROMPT_SUBMIT_MARKER);
+        let marker_dir = marker_path.parent().expect("marker dir");
+        let tmux_path = tempdir.path().join("fake-tmux-idle.sh");
+        fs::write(
+            &tmux_path,
+            format!(
+                "#!/usr/bin/env bash\nset -euo pipefail\nSTATE_DIR={state}\nMARKER={marker}\nMARKER_DIR={marker_dir}\nCMD=\"$1\"\nshift\ncase \"$CMD\" in\n  display-message)\n    while [ $# -gt 0 ]; do\n      case \"$1\" in\n        -p) shift ;;\n        -t) shift 2 ;;\n        *) FORMAT=\"$1\"; shift ;;\n      esac\n    done\n    printf 'issue-206\\t%%1\\t999999\\tcodex\\t%s\\n' {cwd}\n    ;;\n  capture-pane)\n    cat \"$STATE_DIR/capture.txt\" 2>/dev/null || true\n    ;;\n  send-keys)\n    LITERAL=0\n    while [ $# -gt 0 ]; do\n      case \"$1\" in\n        -t) shift 2 ;;\n        -l) LITERAL=1; shift; TEXT=\"$1\"; shift ;;\n        *) KEY=\"$1\"; shift ;;\n      esac\n    done\n    if [ \"$LITERAL\" -eq 1 ]; then\n      printf '%s\\n' \"$TEXT\" > \"$STATE_DIR/prompt.txt\"\n      printf '%s\\n' 'idle-prompt-surface' > \"$STATE_DIR/capture.txt\"\n    else\n      mkdir -p \"$MARKER_DIR\"\n      printf '{{\"attempt\":1}}\\n' > \"$MARKER\"\n      printf '%s\\n' 'idle-prompt-surface' > \"$STATE_DIR/capture.txt\"\n    fi\n    ;;\n  *)\n    echo \"unsupported fake tmux command: $CMD\" >&2\n    exit 1\n    ;;\nesac\n",
+                state = shell_escape_path(&state_dir),
+                marker = shell_escape_path(&marker_path),
+                marker_dir = shell_escape_path(marker_dir),
+                cwd = shell_escape_path(&workdir),
+            ),
+        )
+        .expect("write fake tmux");
+        let mut perms = fs::metadata(&tmux_path).expect("metadata").permissions();
+        perms.set_mode(0o755);
+        fs::set_permissions(&tmux_path, perms).expect("chmod fake tmux");
+
+        let previous_home = std::env::var_os("HOME");
+        let previous_tmux = std::env::var_os("CLAWHIP_TMUX_BIN");
+        unsafe {
+            std::env::set_var("HOME", &fake_home);
+            std::env::set_var("CLAWHIP_TMUX_BIN", &tmux_path);
+        }
+
+        let config = PromptDeliverConfig {
+            session: "issue-206".into(),
+            prompt: "Ship the fix".into(),
+            max_enters: 1,
+            tui_timeout: Duration::from_millis(50),
+            poll_interval: Duration::from_millis(10),
+            verify_delay: Duration::from_millis(10),
+            progress_timeout: Duration::from_millis(30),
+        };
+
+        let error = deliver(&config)
+            .await
+            .expect_err("idle pane should fail fast");
+        assert!(error.to_string().contains("no bounded progress signal"));
+
+        if let Some(previous) = previous_tmux {
+            unsafe {
+                std::env::set_var("CLAWHIP_TMUX_BIN", previous);
+            }
+        } else {
+            unsafe {
+                std::env::remove_var("CLAWHIP_TMUX_BIN");
+            }
+        }
+        if let Some(previous) = previous_home {
+            unsafe {
+                std::env::set_var("HOME", previous);
+            }
+        } else {
+            unsafe {
+                std::env::remove_var("HOME");
+            }
+        }
+    }
+
+    #[tokio::test]
+    #[serial]
+    async fn deliver_retries_enter_until_prompt_submit_marker_changes() {
+        let tempdir = tempdir().expect("tempdir");
+        let workdir = tempdir.path().join("repo");
+        let fake_home = tempdir.path().join("home");
+        fs::create_dir_all(fake_home.join(".codex")).expect("create codex dir");
+        fs::create_dir_all(fake_home.join(".clawhip/hooks")).expect("create hook dir");
+        let command = format!(
+            "node {} --provider codex",
+            shell_escape_path(&fake_home.join(".clawhip/hooks/native-hook.mjs"))
+        );
+        fs::write(
+            fake_home.join(".codex/hooks.json"),
+            format!(
+                r#"{{"hooks":{{"UserPromptSubmit":[{{"hooks":[{{"type":"command","command":"{command}"}}]}}]}}}}"#
+            ),
+        )
+        .expect("write codex hooks");
+        fs::write(
+            fake_home.join(".clawhip/hooks/native-hook.mjs"),
+            "function maybeWritePromptSubmitState() { return '.clawhip/state/prompt-submit.json'; }\n",
+>>>>>>> upstream/main
         )
         .expect("write native hook");
 
@@ -755,6 +1277,7 @@ mod tests {
             tui_timeout: Duration::from_millis(50),
             poll_interval: Duration::from_millis(10),
             verify_delay: Duration::from_millis(10),
+            progress_timeout: Duration::from_millis(40),
         };
 
         let result = deliver(&config).await.expect("deliver");
@@ -770,6 +1293,15 @@ mod tests {
         } else {
             unsafe {
                 std::env::remove_var("HERMIP_TMUX_BIN");
+            }
+        }
+        if let Some(previous) = previous_home {
+            unsafe {
+                std::env::set_var("HOME", previous);
+            }
+        } else {
+            unsafe {
+                std::env::remove_var("HOME");
             }
         }
     }

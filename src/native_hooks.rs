@@ -16,10 +16,14 @@ pub const PROJECT_METADATA_RELATIVE_PATH: &str = HERMIP_PROJECT_FILE;
 pub const NATIVE_HOOK_SCRIPT_RELATIVE_PATH: &str = HOOK_SCRIPT;
 #[cfg(feature = "codex-hook")]
 pub const CODEX_HOOKS_FILE: &str = ".codex/hooks.json";
+#[allow(dead_code)]
+pub const CODEX_CONFIG_FILE: &str = ".codex/config.toml";
 #[cfg(feature = "claude-hook")]
 pub const CLAUDE_SETTINGS_FILE: &str = ".claude/settings.json";
 #[allow(dead_code)]
 pub const HERMES_PLUGIN_DIR: &str = ".hermes/plugins/hermip";
+pub const NATIVE_NORMALIZATION_OUTCOME_FIELD: &str = "normalization_outcome";
+pub const NATIVE_NON_GIT_OUTCOME: &str = "non_git";
 pub const SHARED_HOOK_EVENTS: [&str; 5] = [
     "SessionStart",
     "PreToolUse",
@@ -77,7 +81,7 @@ pub fn incoming_event_from_native_hook_json(
         worktree_path.as_deref().or(directory.as_deref()),
     );
 
-    let repo_name = first_string(
+    let payload_repo_name = first_string(
         payload,
         &[
             "/repo_name",
@@ -86,14 +90,20 @@ pub fn incoming_event_from_native_hook_json(
             "/project_name",
             "/projectName",
         ],
-    )
-    .or_else(|| project_metadata_string(&project_metadata, &["repo_name", "repo", "name"]))
-    .or_else(|| {
-        repo_path
-            .as_deref()
-            .or(worktree_path.as_deref())
-            .and_then(path_basename)
-    });
+    );
+    let canonical_repo_name =
+        project_metadata_string(&project_metadata, &["repo_name", "repo", "name"]).or_else(|| {
+            repo_path
+                .as_deref()
+                .or(worktree_path.as_deref())
+                .and_then(path_basename)
+        });
+    let repo_name = canonicalize_repo_name(
+        payload_repo_name,
+        canonical_repo_name,
+        repo_path.as_deref(),
+        worktree_path.as_deref(),
+    );
     let project_name = first_string(
         payload,
         &[
@@ -221,8 +231,6 @@ pub fn incoming_event_from_native_hook_json(
             "/tmuxSession",
             "/context/tmux_session",
             "/context/tmuxSession",
-            "/tmux/session",
-            "/context/tmux/session",
             "/event_payload/tmux_session",
             "/event_payload/tmuxSession",
             "/event_payload/tmux/session",
@@ -237,8 +245,6 @@ pub fn incoming_event_from_native_hook_json(
             "/tmuxWindow",
             "/context/tmux_window",
             "/context/tmuxWindow",
-            "/tmux/window",
-            "/context/tmux/window",
             "/event_payload/tmux_window",
             "/event_payload/tmuxWindow",
             "/event_payload/tmux/window",
@@ -253,8 +259,6 @@ pub fn incoming_event_from_native_hook_json(
             "/tmuxPane",
             "/context/tmux_pane",
             "/context/tmuxPane",
-            "/tmux/pane",
-            "/context/tmux/pane",
             "/event_payload/tmux_pane",
             "/event_payload/tmuxPane",
             "/event_payload/tmux/pane",
@@ -269,10 +273,6 @@ pub fn incoming_event_from_native_hook_json(
             "/tmuxPaneTty",
             "/context/tmux_pane_tty",
             "/context/tmuxPaneTty",
-            "/tmux/pane_tty",
-            "/tmux/paneTty",
-            "/context/tmux/pane_tty",
-            "/context/tmux/paneTty",
             "/event_payload/tmux_pane_tty",
             "/event_payload/tmuxPaneTty",
             "/event_payload/tmux/pane_tty",
@@ -288,8 +288,6 @@ pub fn incoming_event_from_native_hook_json(
             "/tmuxAttached",
             "/context/tmux_attached",
             "/context/tmuxAttached",
-            "/tmux/attached",
-            "/context/tmux/attached",
             "/event_payload/tmux_attached",
             "/event_payload/tmuxAttached",
             "/event_payload/tmux/attached",
@@ -304,10 +302,6 @@ pub fn incoming_event_from_native_hook_json(
             "/tmuxClientCount",
             "/context/tmux_client_count",
             "/context/tmuxClientCount",
-            "/tmux/client_count",
-            "/tmux/clientCount",
-            "/context/tmux/client_count",
-            "/context/tmux/clientCount",
             "/event_payload/tmux_client_count",
             "/event_payload/tmuxClientCount",
             "/event_payload/tmux/client_count",
@@ -346,6 +340,7 @@ pub fn native_hooks_installed(workdir: &Path) -> bool {
     let result = result || workdir.join(CLAUDE_SETTINGS_FILE).is_file();
     #[cfg(feature = "codex-hook")]
     let result = result || workdir.join(CODEX_HOOKS_FILE).is_file();
+    let result = result || workdir.join(CODEX_CONFIG_FILE).is_file();
     result
 }
 
@@ -390,6 +385,18 @@ function loadProjectMetadata(root) {
   const path = join(root, '.hermip', 'project.json');
   if (!existsSync(path)) return null;
   return parseJson(readFileSync(path, 'utf8'), null);
+}
+
+function inferRepoRoot(cwd) {
+  const commonDir = runGit(['rev-parse', '--path-format=absolute', '--git-common-dir'], cwd);
+  if (commonDir) {
+    return dirname(commonDir);
+  }
+  return runGit(['rev-parse', '--show-toplevel'], cwd) || cwd;
+}
+
+function inferWorktreeRoot(cwd) {
+  return runGit(['rev-parse', '--show-toplevel'], cwd) || cwd;
 }
 
 function parseIntegerish(value) {
@@ -601,17 +608,22 @@ async function main() {
   const cwd = process.cwd();
   const raw = await readStdin();
   const input = parseJson(raw, {});
-  const repoRoot = runGit(['rev-parse', '--show-toplevel'], cwd) || cwd;
-  const projectMetadata = loadProjectMetadata(repoRoot);
+  const eventCwd = input.cwd || input.directory || cwd;
+  const worktreeRoot = inferWorktreeRoot(eventCwd);
+  const repoRoot = inferRepoRoot(eventCwd);
+  const projectMetadata =
+    loadProjectMetadata(repoRoot) ||
+    loadProjectMetadata(worktreeRoot) ||
+    loadProjectMetadata(eventCwd);
   const tmuxMetadata = collectTmuxMetadata(input, cwd);
   const eventName =
     input.hook_event_name || input.hookEventName || input.event_name || input.event || 'unknown';
   const payload = {
     provider,
     source: provider,
-    directory: input.cwd || cwd,
+    directory: eventCwd,
     repo_path: repoRoot,
-    worktree_path: input.cwd || cwd,
+    worktree_path: worktreeRoot,
     repo_name: basename(repoRoot),
     event_name: eventName,
     hook_event_name: eventName,
@@ -648,18 +660,50 @@ async function main() {
     payload.augmentation = augmentation;
   }
 
-  maybeWritePromptSubmitState(repoRoot, provider, eventName, input);
-  maybeEnrichStopEvent(repoRoot, payload, eventName);
+  maybeWritePromptSubmitState(worktreeRoot, provider, eventName, input);
+  maybeEnrichStopEvent(worktreeRoot, payload, eventName);
 
-  spawnSync('hermip', ['native', 'hook', '--provider', provider], {
+  const result = spawnSync('hermip', ['native', 'hook', '--provider', provider], {
     input: JSON.stringify(payload),
     encoding: 'utf8',
-    stdio: ['pipe', 'ignore', 'ignore'],
+    stdio: ['pipe', 'pipe', 'pipe'],
   });
+
+  if (result.error) {
+    const detail =
+      typeof result.error?.message === 'string' && result.error.message.trim()
+        ? result.error.message.trim()
+        : String(result.error);
+    console.error(`[hermip] failed to launch native hook bridge: ${detail}`);
+    process.exit(typeof result.status === 'number' ? result.status : 1);
+  }
+
+  if (typeof result.status === 'number' && result.status !== 0) {
+    if (typeof result.stderr === 'string' && result.stderr.trim()) {
+      process.stderr.write(result.stderr);
+    }
+    console.error(`[hermip] native hook bridge exited with status ${result.status}`);
+    process.exit(result.status);
+  }
+
+  if (result.signal) {
+    if (typeof result.stderr === 'string' && result.stderr.trim()) {
+      process.stderr.write(result.stderr);
+    }
+    console.error(`[hermip] native hook bridge terminated by signal ${result.signal}`);
+    process.exit(1);
+  }
 }
 
-main().catch(() => {
-  process.exit(0);
+main().catch((error) => {
+  const detail =
+    typeof error?.stack === 'string' && error.stack.trim()
+      ? error.stack.trim()
+      : typeof error?.message === 'string' && error.message.trim()
+        ? error.message.trim()
+        : String(error);
+  console.error(`[clawhip] native hook wrapper failed: ${detail}`);
+  process.exit(1);
 });
 "#
 }
@@ -710,6 +754,29 @@ fn load_project_metadata_file(root: &str) -> Option<Value> {
     let path = Path::new(root).join(HERMIP_PROJECT_FILE);
     let raw = fs::read_to_string(path).ok()?;
     serde_json::from_str::<Value>(&raw).ok()
+}
+
+fn canonicalize_repo_name(
+    payload_repo_name: Option<String>,
+    canonical_repo_name: Option<String>,
+    repo_path: Option<&str>,
+    worktree_path: Option<&str>,
+) -> Option<String> {
+    let repo_path_basename = repo_path.and_then(path_basename);
+    let worktree_basename = worktree_path.and_then(path_basename);
+
+    match payload_repo_name {
+        Some(payload_repo_name)
+            if repo_path_basename
+                .as_deref()
+                .is_some_and(|repo_name| repo_name != payload_repo_name)
+                && worktree_basename.as_deref() == Some(payload_repo_name.as_str()) =>
+        {
+            canonical_repo_name.or(Some(payload_repo_name))
+        }
+        Some(payload_repo_name) => Some(payload_repo_name),
+        None => canonical_repo_name,
+    }
 }
 
 fn project_metadata_string(project_metadata: &Option<Value>, keys: &[&str]) -> Option<String> {
@@ -1055,6 +1122,92 @@ mod tests {
     }
 
     #[test]
+    fn generated_hook_script_surfaces_bridge_failures() {
+        let script = generated_hook_script();
+        assert!(script.contains("stdio: ['pipe', 'pipe', 'pipe']"));
+        assert!(script.contains("failed to launch native hook bridge"));
+        assert!(script.contains("native hook bridge exited with status"));
+        assert!(script.contains("native hook bridge terminated by signal"));
+        assert!(script.contains("native hook wrapper failed"));
+        assert!(script.contains("process.exit(1);"));
+    }
+
+    #[test]
+    fn generated_hook_script_e2e_surfaces_bridge_stderr_and_exit_code() {
+        use std::io::Write;
+        use std::os::unix::fs::PermissionsExt;
+        use std::process::Stdio;
+
+        let node_check = Command::new("node").arg("--version").output();
+        let Ok(node_check) = node_check else {
+            eprintln!("skipping native hook e2e: node unavailable");
+            return;
+        };
+        if !node_check.status.success() {
+            eprintln!("skipping native hook e2e: node unavailable");
+            return;
+        }
+
+        let temp = tempfile::tempdir().expect("tempdir");
+        let repo = temp.path().join("repo");
+        let hook_dir = repo.join(".clawhip/hooks");
+        std::fs::create_dir_all(&hook_dir).expect("create hook dir");
+
+        let hook_path = hook_dir.join("native-hook.mjs");
+        std::fs::write(&hook_path, generated_hook_script()).expect("write hook script");
+        let mut hook_perms = std::fs::metadata(&hook_path)
+            .expect("hook metadata")
+            .permissions();
+        hook_perms.set_mode(0o755);
+        std::fs::set_permissions(&hook_path, hook_perms).expect("chmod hook");
+
+        let fake_bin = temp.path().join("bin");
+        std::fs::create_dir_all(&fake_bin).expect("create fake bin");
+        let fake_clawhip = fake_bin.join("clawhip");
+        std::fs::write(
+            &fake_clawhip,
+            "#!/bin/sh\necho 'fake native hook bridge failure' >&2\nexit 7\n",
+        )
+        .expect("write fake clawhip");
+        let mut fake_perms = std::fs::metadata(&fake_clawhip)
+            .expect("fake metadata")
+            .permissions();
+        fake_perms.set_mode(0o755);
+        std::fs::set_permissions(&fake_clawhip, fake_perms).expect("chmod fake clawhip");
+
+        let path = std::env::var("PATH").unwrap_or_default();
+        let mut child = Command::new("node")
+            .arg(&hook_path)
+            .arg("--provider")
+            .arg("codex")
+            .current_dir(&repo)
+            .env("PATH", format!("{}:{path}", fake_bin.display()))
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .expect("spawn node hook");
+        child
+            .stdin
+            .as_mut()
+            .expect("stdin")
+            .write_all(br#"{"event_name":"SessionStart","cwd":"."}"#)
+            .expect("write payload");
+        let output = child.wait_with_output().expect("wait for hook");
+        let stderr = String::from_utf8_lossy(&output.stderr);
+
+        assert_eq!(output.status.code(), Some(7), "stderr: {stderr}");
+        assert!(
+            stderr.contains("fake native hook bridge failure"),
+            "stderr: {stderr}"
+        );
+        assert!(
+            stderr.contains("native hook bridge exited with status 7"),
+            "stderr: {stderr}"
+        );
+    }
+
+    #[test]
     fn preserves_tmux_metadata_from_native_payloads() {
         let event = incoming_event_from_native_hook_json(&json!({
             "provider": "codex",
@@ -1143,6 +1296,16 @@ mod tests {
     }
 
     #[test]
+    fn generated_hook_script_mentions_worktree_repo_root_fallback() {
+        let script = generated_hook_script();
+        assert!(script.contains("function inferRepoRoot(cwd)"));
+        assert!(script.contains("function inferWorktreeRoot(cwd)"));
+        assert!(script.contains("--git-common-dir"));
+        assert!(script.contains("const eventCwd = input.cwd || input.directory || cwd;"));
+        assert!(script.contains("loadProjectMetadata(worktreeRoot)"));
+    }
+
+    #[test]
     fn infer_repo_root_returns_main_repo_for_worktree() {
         let temp = tempfile::tempdir().expect("tempdir");
         let repo = temp.path().join("repo");
@@ -1191,6 +1354,164 @@ mod tests {
             result,
             Some(expected),
             "infer_repo_root should return the main repo, not the worktree"
+        );
+    }
+
+    #[test]
+    fn canonicalizes_repo_name_when_payload_uses_worktree_leaf() {
+        let event = incoming_event_from_native_hook_json(&json!({
+            "provider": "codex",
+            "event_name": "UserPromptSubmit",
+            "repo_name": "launch-fix-native-hook-malfunction",
+            "repo_path": "/mnt/offloading/Workspace/clawhip",
+            "worktree_path": "/mnt/offloading/Workspace/clawhip.omx-worktrees/launch-fix-native-hook-malfunction",
+            "event_payload": {}
+        }))
+        .expect("event");
+
+        assert_eq!(event.payload["repo_name"], json!("clawhip"));
+        assert_eq!(
+            event.payload["worktree_path"],
+            json!(
+                "/mnt/offloading/Workspace/clawhip.omx-worktrees/launch-fix-native-hook-malfunction"
+            )
+        );
+    }
+
+    #[test]
+    fn generated_hook_script_e2e_emits_canonical_repo_metadata_from_event_cwd() {
+        use std::io::Write;
+        use std::os::unix::fs::PermissionsExt;
+        use std::process::Stdio;
+
+        let node_check = Command::new("node").arg("--version").output();
+        let Ok(node_check) = node_check else {
+            eprintln!("skipping native hook e2e: node unavailable");
+            return;
+        };
+        if !node_check.status.success() {
+            eprintln!("skipping native hook e2e: node unavailable");
+            return;
+        }
+
+        let temp = tempfile::tempdir().expect("tempdir");
+        let repo = temp.path().join("repo");
+        std::fs::create_dir_all(&repo).expect("create repo dir");
+
+        fn git(dir: &std::path::Path, args: &[&str]) {
+            let out = Command::new("git")
+                .args(args)
+                .current_dir(dir)
+                .output()
+                .expect("git");
+            assert!(
+                out.status.success(),
+                "git {:?}: {}",
+                args,
+                String::from_utf8_lossy(&out.stderr)
+            );
+        }
+
+        git(&repo, &["init"]);
+        std::fs::create_dir_all(repo.join(".clawhip")).expect("create clawhip dir");
+        std::fs::write(
+            repo.join(".clawhip/project.json"),
+            r#"{"name":"clawhip","repo_name":"clawhip"}"#,
+        )
+        .expect("write project metadata");
+        std::fs::write(repo.join("README.md"), "init\n").expect("write");
+        git(&repo, &["add", "README.md", ".clawhip/project.json"]);
+        git(
+            &repo,
+            &[
+                "-c",
+                "user.name=Test",
+                "-c",
+                "user.email=t@t",
+                "commit",
+                "-m",
+                "init",
+            ],
+        );
+        git(&repo, &["branch", "issue-212"]);
+
+        let wt = temp.path().join("wt-issue-212");
+        git(
+            &repo,
+            &["worktree", "add", &wt.to_string_lossy(), "issue-212"],
+        );
+        let nested = wt.join("src/bin");
+        std::fs::create_dir_all(&nested).expect("create nested dir");
+
+        let hook_dir = repo.join(".clawhip/hooks");
+        std::fs::create_dir_all(&hook_dir).expect("create hook dir");
+        let hook_path = hook_dir.join("native-hook.mjs");
+        std::fs::write(&hook_path, generated_hook_script()).expect("write hook script");
+        let mut hook_perms = std::fs::metadata(&hook_path)
+            .expect("hook metadata")
+            .permissions();
+        hook_perms.set_mode(0o755);
+        std::fs::set_permissions(&hook_path, hook_perms).expect("chmod hook");
+
+        let fake_bin = temp.path().join("bin");
+        std::fs::create_dir_all(&fake_bin).expect("create fake bin");
+        let capture_path = temp.path().join("captured.json");
+        let fake_clawhip = fake_bin.join("clawhip");
+        std::fs::write(
+            &fake_clawhip,
+            format!("#!/bin/sh\ncat > '{}'\nexit 0\n", capture_path.display()),
+        )
+        .expect("write fake clawhip");
+        let mut fake_perms = std::fs::metadata(&fake_clawhip)
+            .expect("fake metadata")
+            .permissions();
+        fake_perms.set_mode(0o755);
+        std::fs::set_permissions(&fake_clawhip, fake_perms).expect("chmod fake clawhip");
+
+        let path = std::env::var("PATH").unwrap_or_default();
+        let mut child = Command::new("node")
+            .arg(&hook_path)
+            .arg("--provider")
+            .arg("codex")
+            .current_dir(&nested)
+            .env("PATH", format!("{}:{path}", fake_bin.display()))
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .expect("spawn node hook");
+        child
+            .stdin
+            .as_mut()
+            .expect("stdin")
+            .write_all(
+                format!(
+                    r#"{{"event_name":"UserPromptSubmit","cwd":"{}","prompt":"Ship it"}}"#,
+                    nested.display()
+                )
+                .as_bytes(),
+            )
+            .expect("write payload");
+        let output = child.wait_with_output().expect("wait for hook");
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(output.status.success(), "stderr: {stderr}");
+
+        let captured: Value =
+            serde_json::from_str(&std::fs::read_to_string(&capture_path).expect("capture payload"))
+                .expect("captured json");
+        assert_eq!(
+            captured["repo_path"],
+            json!(repo.canonicalize().expect("canonical repo"))
+        );
+        assert_eq!(
+            captured["worktree_path"],
+            json!(wt.canonicalize().expect("canonical worktree"))
+        );
+        assert_eq!(captured["repo_name"], json!("clawhip"));
+        assert_eq!(captured["project_name"], json!("clawhip"));
+        assert!(
+            wt.join(".clawhip/state/prompt-submit.json").is_file(),
+            "prompt-submit marker should be stored in the worktree root"
         );
     }
 

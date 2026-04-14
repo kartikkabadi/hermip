@@ -61,7 +61,9 @@ Operational flow:
 
 Operational flow:
 
-1. Enable provider-native hooks at project or global scope in a real Codex workspace.
+1. Enable provider-native hooks in a real Codex or Claude Code workspace:
+   - Codex: `clawhip hooks install --provider codex --scope global` or `--scope project` (matching the official Codex `hooks.json` search locations)
+   - Claude Code: `clawhip hooks install --provider claude-code --scope global`
 2. Pipe one representative Codex payload through the generic native ingress:
 
 ```bash

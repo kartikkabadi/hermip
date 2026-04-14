@@ -61,7 +61,9 @@ cat payload.json | hermip native hook --provider codex
 
 Recommended installation model:
 
-- install provider-native hooks at project or global scope
+- install the shared clawhip bridge in `~/.clawhip/hooks/native-hook.mjs`
+- for Codex, align with the official hook contract: use either `~/.codex/hooks.json` or `<repo>/.codex/hooks.json`
+- for Claude Code, install the provider-native hook config globally in `~/.claude/settings.json`
 - keep provider config in the provider-owned config files
 - keep routing metadata in `.hermip/project.json`
 - use `.hermip/hooks/` only for additive augmentation such as frontmatter or recent context
@@ -586,7 +588,7 @@ Behavior:
 - `deliver` is the prompt recovery path for an already-running hooked tmux-backed provider session
 - `tmux list` shows active daemon-known watches with source, registration timestamp, and parent-process info
 - final delivery still goes through daemon routing
-- `deliver` refuses arbitrary shells and requires repo-local prompt-submit-aware hook setup (`clawhip hooks install --all --scope project`)
+- `deliver` refuses arbitrary shells and requires prompt-submit-aware hook setup (`clawhip hooks install --provider codex --scope global|project` for Codex, with the bridge in `~/.clawhip`, or `clawhip hooks install --provider claude-code --scope global` for Claude Code)
 
 Routing note:
 - session names are labels for operators, not routing authority
@@ -788,6 +790,7 @@ Expected install path:
 Use:
 - `docs/live-verification.md`
 - `scripts/live-verify-default-presets.sh`
+- `scripts/internal-pr-format-gate.sh` for cheap local format gating before internal PR create/update flows
 
 Required live sign-off presets:
 - issue opened
@@ -818,3 +821,19 @@ hermip native hook ... # provider-native hook thin client
 clawhip tmux ...        # thin client / wrapper surface
 clawhip plugin list     # list installed/bundled shell-hook plugins
 ```
+
+## Internal PR fast-path
+
+Before opening or updating an internal PR from a Rust worktree, run:
+
+```bash
+scripts/internal-pr-format-gate.sh
+```
+
+If you already know the tree just needs formatting, auto-fix first:
+
+```bash
+scripts/internal-pr-format-gate.sh --fix
+```
+
+This catches the cheapest class of red CI (`cargo fmt` only) locally before PR create/update churn.

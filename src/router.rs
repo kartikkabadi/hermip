@@ -245,13 +245,24 @@ impl Router {
             });
         }
 
-        let deliveries = if matched_indices.is_empty() {
+        let ordered_matched_indices: Vec<usize> =
+            matching_routes_for(&self.config.routes, &canonical_kind, &context)
+                .into_iter()
+                .filter_map(|matched_route| {
+                    self.config
+                        .routes
+                        .iter()
+                        .position(|route| std::ptr::eq(route, matched_route))
+                })
+                .collect();
+
+        let deliveries = if ordered_matched_indices.is_empty() {
             match self.resolve_delivery(event, None) {
                 Ok(d) => vec![delivery_explanation(&d, None)],
                 Err(_) => vec![],
             }
         } else {
-            matched_indices
+            ordered_matched_indices
                 .iter()
                 .filter_map(|&idx| {
                     let route = &self.config.routes[idx];
@@ -481,11 +492,47 @@ fn matching_routes_for<'a>(
         }
     }
 
+    preferred.sort_by(|left, right| {
+        route_specificity_score(right, context).cmp(&route_specificity_score(left, context))
+    });
+    heuristic.sort_by(|left, right| {
+        route_specificity_score(right, context).cmp(&route_specificity_score(left, context))
+    });
+
     if !prefer_metadata {
         preferred.extend(heuristic);
     }
 
     preferred
+}
+
+fn route_specificity_score(
+    route: &RouteRule,
+    context: &std::collections::BTreeMap<String, String>,
+) -> usize {
+    let path_rank = if route.filter.contains_key("worktree_path")
+        && context
+            .get("worktree_path")
+            .is_some_and(|value| !value.trim().is_empty())
+    {
+        3
+    } else if route.filter.contains_key("repo_path")
+        && context
+            .get("repo_path")
+            .is_some_and(|value| !value.trim().is_empty())
+    {
+        2
+    } else if route.filter.contains_key("repo_name")
+        && context
+            .get("repo_name")
+            .is_some_and(|value| !value.trim().is_empty())
+    {
+        1
+    } else {
+        0
+    };
+
+    (path_rank * 100) + route.filter.len()
 }
 
 fn prefers_metadata_first_routing(

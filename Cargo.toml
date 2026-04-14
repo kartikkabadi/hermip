@@ -1,6 +1,6 @@
 [package]
 name = "hermip"
-version = "0.6.6"
+version = "0.6.7"
 edition = "2024"
 description = "Event-to-channel notification router for Discord — bypass gateway sessions, just events in, messages out"
 license = "MIT"
@@ -28,6 +28,7 @@ codex-hook = []
 claude-hook = []
 
 [dev-dependencies]
+serial_test = "3"
 tempfile = "3.15"
 
 # The profile that 'dist' will build with

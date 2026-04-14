@@ -127,6 +127,11 @@ struct CronScheduler {
     jobs: Vec<ScheduledCronJob>,
     last_processed_minute: Option<i64>,
     job_fingerprints: HashMap<String, String>,
+    /// Counts how many consecutive ticks each job has been at the same
+    /// zero-backlog fingerprint.  Used to cycle through hardening candidates
+    /// so the operator always sees a fresh improvement suggestion rather than
+    /// silence.
+    zero_backlog_counters: HashMap<String, u64>,
     state_path: Option<PathBuf>,
 }
 
@@ -149,18 +154,24 @@ impl CronScheduler {
             });
         }
 
-        let (last_processed_minute, job_fingerprints) = match state_path.as_deref() {
-            Some(path) => {
-                let state = load_scheduler_state(path)?;
-                (state.last_processed_minute, state.job_fingerprints)
-            }
-            None => (None, HashMap::new()),
-        };
+        let (last_processed_minute, job_fingerprints, zero_backlog_counters) =
+            match state_path.as_deref() {
+                Some(path) => {
+                    let state = load_scheduler_state(path)?;
+                    (
+                        state.last_processed_minute,
+                        state.job_fingerprints,
+                        state.zero_backlog_counters,
+                    )
+                }
+                None => (None, HashMap::new(), HashMap::new()),
+            };
 
         Ok(Self {
             jobs,
             last_processed_minute,
             job_fingerprints,
+            zero_backlog_counters,
             state_path,
         })
     }
@@ -192,8 +203,24 @@ impl CronScheduler {
                         .as_deref()
                         .and_then(evaluate_state_file);
                     if should_suppress(&state, self.job_fingerprints.get(&job.config.id)) {
+                        // Rather than staying silent, surface one hardening
+                        // candidate so zero-backlog ticks remain actionable.
+                        let cycle = {
+                            let c = self
+                                .zero_backlog_counters
+                                .entry(job.config.id.clone())
+                                .or_insert(0);
+                            *c += 1;
+                            *c
+                        };
+                        emitter
+                            .emit(build_hardening_event(&job.config, state.as_ref(), cycle))
+                            .await?;
+                        executed.push(job.config.id.clone());
                         continue;
                     }
+                    // Normal emission: reset any accumulated hardening cycle.
+                    self.zero_backlog_counters.remove(&job.config.id);
                     emitter
                         .emit(build_job_event(&job.config, state.as_ref()))
                         .await?;
@@ -221,6 +248,7 @@ impl CronScheduler {
             &CronSchedulerState {
                 last_processed_minute: self.last_processed_minute,
                 job_fingerprints: self.job_fingerprints.clone(),
+                zero_backlog_counters: self.zero_backlog_counters.clone(),
             },
         )
     }
@@ -264,6 +292,72 @@ fn build_job_event(job: &CronJob, state: Option<&StateEvaluation>) -> IncomingEv
         }
     }
 
+    event
+}
+
+/// Hardening / operator-UX improvement lanes surfaced when a zero-backlog
+/// cron job would otherwise be silently suppressed.  The scheduler cycles
+/// through these in order so consecutive quiet ticks each suggest a fresh,
+/// concrete action rather than repeating a no-op status confirmation.
+///
+/// Each entry is `(lane_label, rationale)` where:
+/// - `lane_label` — a short imperative phrase naming the improvement area
+/// - `rationale`  — one sentence explaining why it's worth doing right now
+const HARDENING_CANDIDATES: &[(&str, &str)] = &[
+    (
+        "audit tmux-wrapper false-positive rate",
+        "scan last-week logs for zero-delta keyword hits that fired on noise",
+    ),
+    (
+        "verify Discord channel bindings",
+        "run binding-verify to catch stale channel config before the next incident",
+    ),
+    (
+        "review cron cadence vs review velocity",
+        "check whether follow-up schedules match actual PR/issue turnaround times",
+    ),
+    (
+        "audit zero-delta event spam",
+        "repeated identical payloads may indicate a misconfigured state_file path",
+    ),
+    (
+        "review release/main merge friction",
+        "recurring conflicts could be eliminated with an explicit merge strategy or branch policy",
+    ),
+];
+
+/// Build the event emitted when a job would be suppressed due to a stable
+/// zero-backlog fingerprint.  `cycle` is the 1-based count of consecutive
+/// suppressed ticks for this job; it drives candidate selection and is
+/// embedded in the payload so downstream consumers can observe the rotation.
+fn build_hardening_event(
+    job: &CronJob,
+    state: Option<&StateEvaluation>,
+    cycle: u64,
+) -> IncomingEvent {
+    let idx = ((cycle - 1) as usize) % HARDENING_CANDIDATES.len();
+    let (lane, rationale) = HARDENING_CANDIDATES[idx];
+    let message = format!("[zero-backlog hardening] {lane} — {rationale}");
+    let mut event = IncomingEvent::custom(job.channel.clone(), message)
+        .with_mention(job.mention.clone())
+        .with_format(job.format.clone());
+    if let Some(payload) = event.payload.as_object_mut() {
+        payload.insert("cron_job_id".to_string(), json!(job.id));
+        payload.insert("cron_schedule".to_string(), json!(job.schedule));
+        payload.insert("cron_timezone".to_string(), json!(job.timezone));
+        payload.insert("hardening_cycle".to_string(), json!(cycle));
+        payload.insert("hardening_lane".to_string(), json!(lane));
+        if let Some(state) = state {
+            payload.insert(
+                "repo_state_fingerprint".to_string(),
+                json!(state.fingerprint),
+            );
+            payload.insert(
+                "repo_state_zero_backlog".to_string(),
+                json!(state.zero_backlog),
+            );
+        }
+    }
     event
 }
 
@@ -508,10 +602,15 @@ fn weekday_to_cron(weekday: Weekday) -> u8 {
 struct CronSchedulerState {
     last_processed_minute: Option<i64>,
     /// Per-job canonical JSON fingerprint of the `state_file` contents at the
-    /// time of the last successful emission. Used to suppress repeated
-    /// zero-delta follow-up nudges when the repo backlog is already zero.
+    /// time of the last successful emission. Used to detect when a zero-backlog
+    /// state changes so the job fires again rather than emitting hardening only.
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     job_fingerprints: HashMap<String, String>,
+    /// Per-job count of consecutive ticks at the same zero-backlog fingerprint.
+    /// Cycles through `HARDENING_CANDIDATES` so each quiet tick surfaces a
+    /// different improvement suggestion.
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    zero_backlog_counters: HashMap<String, u64>,
 }
 
 fn load_scheduler_state(path: &Path) -> Result<CronSchedulerState> {
@@ -695,7 +794,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn suppresses_repeat_nudge_when_backlog_is_zero_and_state_unchanged() {
+    async fn zero_backlog_steady_state_emits_hardening_candidates_not_churn() {
         let dir = tempdir().expect("tempdir");
         let state_path = dir.path().join("cron-state.json");
         let repo_state = dir.path().join("repo.json");
@@ -710,29 +809,63 @@ mod tests {
             CronScheduler::new_with_state_path(&config, state_path).expect("scheduler");
         let emitter = RecordingEmitter::default();
 
+        // First tick fires normally: fingerprint not yet stored so no suppression.
         scheduler
             .emit_due(&emitter, dt(2026, Month::April, 2, 8, 20, 3))
             .await
             .expect("first tick");
+        // Second tick: same zero-backlog fingerprint → emit hardening candidate #1.
         scheduler
             .emit_due(&emitter, dt(2026, Month::April, 2, 8, 30, 5))
             .await
-            .expect("second tick — should suppress");
+            .expect("second tick — hardening #1");
+        // Third tick: same fingerprint → emit hardening candidate #2 (different lane).
         scheduler
             .emit_due(&emitter, dt(2026, Month::April, 2, 8, 40, 5))
             .await
-            .expect("third tick — should also suppress");
+            .expect("third tick — hardening #2");
 
         let events = emitter.events.lock().expect("events lock");
         assert_eq!(
             events.len(),
-            1,
-            "expected only the first nudge to fire while state stayed at zero backlog"
+            3,
+            "first normal emission + two hardening candidates, no silent drops"
+        );
+        // First event is the normal job message.
+        assert_eq!(
+            events[0].payload["message"],
+            json!("check open PRs"),
+            "tick 1 must emit the configured job message"
         );
         assert_eq!(
             events[0].payload["repo_state_zero_backlog"],
             json!(true),
-            "emitted event should carry the zero-backlog signal"
+            "tick 1 must carry the zero-backlog signal"
+        );
+        // Second event is hardening cycle 1.
+        assert_eq!(
+            events[1].payload["hardening_cycle"],
+            json!(1_u64),
+            "tick 2 must be hardening cycle 1"
+        );
+        assert!(
+            events[1].payload["hardening_lane"].is_string(),
+            "hardening event must carry a lane label"
+        );
+        assert_eq!(
+            events[1].payload["repo_state_zero_backlog"],
+            json!(true),
+            "hardening event must still carry zero-backlog signal"
+        );
+        // Third event is hardening cycle 2 with a different lane.
+        assert_eq!(
+            events[2].payload["hardening_cycle"],
+            json!(2_u64),
+            "tick 3 must be hardening cycle 2"
+        );
+        assert_ne!(
+            events[2].payload["hardening_lane"], events[1].payload["hardening_lane"],
+            "consecutive hardening ticks must rotate through different lanes"
         );
     }
 
@@ -822,7 +955,7 @@ mod tests {
             .emit_due(&emitter, dt(2026, Month::April, 2, 8, 20, 0))
             .await
             .expect("tick 1");
-        // Second tick is suppressed: same zero backlog, same fingerprint.
+        // Second tick: same zero-backlog fingerprint → hardening candidate instead of silence.
         scheduler
             .emit_due(&emitter, dt(2026, Month::April, 2, 8, 30, 0))
             .await
@@ -836,25 +969,36 @@ mod tests {
             .await
             .expect("tick 3 — nonzero delta");
 
-        // Work ships; backlog drops back to zero. The scheduler should fire
-        // one more time to announce the transition, then fall silent again.
+        // Work ships; backlog drops back to zero. The scheduler fires once to
+        // announce the transition (different fingerprint from the nonzero state).
         fs::write(&repo_state, r#"{"open_issues":0,"open_prs":0}"#)
             .expect("write repo state v3 (back to zero)");
         scheduler
             .emit_due(&emitter, dt(2026, Month::April, 2, 8, 50, 0))
             .await
             .expect("tick 4 — zero transition");
+        // Tick 5: same zero fingerprint again → hardening candidate (counter resets after tick 3).
         scheduler
             .emit_due(&emitter, dt(2026, Month::April, 2, 9, 0, 0))
             .await
-            .expect("tick 5 — suppressed again");
+            .expect("tick 5 — hardening again");
 
         let events = emitter.events.lock().expect("events lock");
         assert_eq!(
             events.len(),
-            3,
-            "expected emissions at ticks 1, 3, 4 (ticks 2 and 5 suppressed)"
+            5,
+            "all five ticks emit: ticks 1/3/4 normal, ticks 2/5 hardening"
         );
+        assert!(
+            events[1].payload.get("hardening_lane").is_some(),
+            "tick 2 is hardening"
+        );
+        assert!(
+            events[4].payload.get("hardening_lane").is_some(),
+            "tick 5 is hardening"
+        );
+        // Hardening counter resets after the nonzero interlude, so tick 5 restarts at cycle 1.
+        assert_eq!(events[4].payload["hardening_cycle"], json!(1_u64));
     }
 
     #[tokio::test]
@@ -909,7 +1053,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn fingerprint_persists_across_scheduler_restarts() {
+    async fn fingerprint_and_counter_persist_across_scheduler_restarts() {
         let dir = tempdir().expect("tempdir");
         let state_path = dir.path().join("cron-state.json");
         let repo_state = dir.path().join("repo.json");
@@ -925,8 +1069,9 @@ mod tests {
             .await
             .expect("first emit");
 
-        // Restart reads the persisted fingerprint and should keep suppressing
-        // — a daemon restart shouldn't cause a spurious repeat nudge.
+        // Restart reads the persisted fingerprint and counter.  The zero-backlog
+        // state hasn't changed, so the restarted scheduler should emit hardening
+        // cycle 1 (not a spurious duplicate of the original nudge).
         let mut restarted =
             CronScheduler::new_with_state_path(&config, state_path).expect("restarted scheduler");
         restarted
@@ -935,7 +1080,17 @@ mod tests {
             .expect("restarted emit");
 
         let events = emitter.events.lock().expect("events lock");
-        assert_eq!(events.len(), 1);
+        assert_eq!(
+            events.len(),
+            2,
+            "tick 1 normal + tick 2 hardening after restart"
+        );
+        assert_eq!(events[0].payload["message"], json!("check open PRs"));
+        assert_eq!(
+            events[1].payload["hardening_cycle"],
+            json!(1_u64),
+            "persisted counter resumes cycling after restart"
+        );
     }
 
     #[test]
