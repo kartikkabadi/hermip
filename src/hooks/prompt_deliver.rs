@@ -1107,10 +1107,10 @@ mod tests {
     fn infer_provider_from_hook_setup_requires_single_provider() {
         let setup = HookSetup {
             workdir: PathBuf::from("/tmp/repo"),
-            marker_path: PathBuf::from("/tmp/repo/.clawhip/state/prompt-submit.json"),
+            marker_path: PathBuf::from("/tmp/repo/.hermip/state/prompt-submit.json"),
             supported_providers: vec![ProviderKind::Omx],
             sources: vec![
-                "~/.codex/hooks.json or ~/.codex/config.toml + ~/.clawhip/hooks/native-hook.mjs",
+                "~/.codex/hooks.json or ~/.codex/config.toml + ~/.hermip/hooks/native-hook.mjs",
             ],
             install_scope: HookDetectionScope::Global,
         };

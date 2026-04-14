@@ -701,7 +701,7 @@ main().catch((error) => {
       : typeof error?.message === 'string' && error.message.trim()
         ? error.message.trim()
         : String(error);
-  console.error(`[clawhip] native hook wrapper failed: ${detail}`);
+  console.error(`[hermip] native hook wrapper failed: ${detail}`);
   process.exit(1);
 });
 "#
@@ -1150,7 +1150,7 @@ mod tests {
 
         let temp = tempfile::tempdir().expect("tempdir");
         let repo = temp.path().join("repo");
-        let hook_dir = repo.join(".clawhip/hooks");
+        let hook_dir = repo.join(".hermip/hooks");
         std::fs::create_dir_all(&hook_dir).expect("create hook dir");
 
         let hook_path = hook_dir.join("native-hook.mjs");
@@ -1163,17 +1163,17 @@ mod tests {
 
         let fake_bin = temp.path().join("bin");
         std::fs::create_dir_all(&fake_bin).expect("create fake bin");
-        let fake_clawhip = fake_bin.join("clawhip");
+        let fake_hermip = fake_bin.join("hermip");
         std::fs::write(
-            &fake_clawhip,
+            &fake_hermip,
             "#!/bin/sh\necho 'fake native hook bridge failure' >&2\nexit 7\n",
         )
-        .expect("write fake clawhip");
-        let mut fake_perms = std::fs::metadata(&fake_clawhip)
+        .expect("write fake hermip");
+        let mut fake_perms = std::fs::metadata(&fake_hermip)
             .expect("fake metadata")
             .permissions();
         fake_perms.set_mode(0o755);
-        std::fs::set_permissions(&fake_clawhip, fake_perms).expect("chmod fake clawhip");
+        std::fs::set_permissions(&fake_hermip, fake_perms).expect("chmod fake hermip");
 
         let path = std::env::var("PATH").unwrap_or_default();
         let mut child = Command::new("node")
@@ -1251,7 +1251,7 @@ mod tests {
     fn preserves_nested_tmux_metadata_from_native_payloads() {
         let event = incoming_event_from_native_hook_json(&json!({
             "provider": "codex",
-            "directory": "/repo/clawhip",
+            "directory": "/repo/hermip",
             "event_name": "SessionStart",
             "event_payload": {
                 "tmux": {
@@ -1364,17 +1364,17 @@ mod tests {
             "provider": "codex",
             "event_name": "UserPromptSubmit",
             "repo_name": "launch-fix-native-hook-malfunction",
-            "repo_path": "/mnt/offloading/Workspace/clawhip",
-            "worktree_path": "/mnt/offloading/Workspace/clawhip.omx-worktrees/launch-fix-native-hook-malfunction",
+            "repo_path": "/mnt/offloading/Workspace/hermip",
+            "worktree_path": "/mnt/offloading/Workspace/hermip.omx-worktrees/launch-fix-native-hook-malfunction",
             "event_payload": {}
         }))
         .expect("event");
 
-        assert_eq!(event.payload["repo_name"], json!("clawhip"));
+        assert_eq!(event.payload["repo_name"], json!("hermip"));
         assert_eq!(
             event.payload["worktree_path"],
             json!(
-                "/mnt/offloading/Workspace/clawhip.omx-worktrees/launch-fix-native-hook-malfunction"
+                "/mnt/offloading/Workspace/hermip.omx-worktrees/launch-fix-native-hook-malfunction"
             )
         );
     }
@@ -1415,14 +1415,14 @@ mod tests {
         }
 
         git(&repo, &["init"]);
-        std::fs::create_dir_all(repo.join(".clawhip")).expect("create clawhip dir");
+        std::fs::create_dir_all(repo.join(".hermip")).expect("create hermip dir");
         std::fs::write(
-            repo.join(".clawhip/project.json"),
-            r#"{"name":"clawhip","repo_name":"clawhip"}"#,
+            repo.join(".hermip/project.json"),
+            r#"{"name":"hermip","repo_name":"hermip"}"#,
         )
         .expect("write project metadata");
         std::fs::write(repo.join("README.md"), "init\n").expect("write");
-        git(&repo, &["add", "README.md", ".clawhip/project.json"]);
+        git(&repo, &["add", "README.md", ".hermip/project.json"]);
         git(
             &repo,
             &[
@@ -1445,7 +1445,7 @@ mod tests {
         let nested = wt.join("src/bin");
         std::fs::create_dir_all(&nested).expect("create nested dir");
 
-        let hook_dir = repo.join(".clawhip/hooks");
+        let hook_dir = repo.join(".hermip/hooks");
         std::fs::create_dir_all(&hook_dir).expect("create hook dir");
         let hook_path = hook_dir.join("native-hook.mjs");
         std::fs::write(&hook_path, generated_hook_script()).expect("write hook script");
@@ -1458,17 +1458,17 @@ mod tests {
         let fake_bin = temp.path().join("bin");
         std::fs::create_dir_all(&fake_bin).expect("create fake bin");
         let capture_path = temp.path().join("captured.json");
-        let fake_clawhip = fake_bin.join("clawhip");
+        let fake_hermip = fake_bin.join("hermip");
         std::fs::write(
-            &fake_clawhip,
+            &fake_hermip,
             format!("#!/bin/sh\ncat > '{}'\nexit 0\n", capture_path.display()),
         )
-        .expect("write fake clawhip");
-        let mut fake_perms = std::fs::metadata(&fake_clawhip)
+        .expect("write fake hermip");
+        let mut fake_perms = std::fs::metadata(&fake_hermip)
             .expect("fake metadata")
             .permissions();
         fake_perms.set_mode(0o755);
-        std::fs::set_permissions(&fake_clawhip, fake_perms).expect("chmod fake clawhip");
+        std::fs::set_permissions(&fake_hermip, fake_perms).expect("chmod fake hermip");
 
         let path = std::env::var("PATH").unwrap_or_default();
         let mut child = Command::new("node")
@@ -1509,10 +1509,10 @@ mod tests {
             captured["worktree_path"],
             json!(wt.canonicalize().expect("canonical worktree"))
         );
-        assert_eq!(captured["repo_name"], json!("clawhip"));
-        assert_eq!(captured["project_name"], json!("clawhip"));
+        assert_eq!(captured["repo_name"], json!("hermip"));
+        assert_eq!(captured["project_name"], json!("hermip"));
         assert!(
-            wt.join(".clawhip/state/prompt-submit.json").is_file(),
+            wt.join(".hermip/state/prompt-submit.json").is_file(),
             "prompt-submit marker should be stored in the worktree root"
         );
     }

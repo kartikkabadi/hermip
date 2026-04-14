@@ -704,7 +704,7 @@ mod tests {
     #[tokio::test]
     async fn post_native_hook_accepts_codex_payload_and_queues_normalized_event() {
         let temp = tempfile::tempdir().expect("tempdir");
-        let repo = temp.path().join("clawhip");
+        let repo = temp.path().join("hermip");
         std::fs::create_dir_all(&repo).expect("create repo");
         let git = std::process::Command::new("git")
             .args(["init"])
