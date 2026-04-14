@@ -22,7 +22,9 @@ pub const CODEX_CONFIG_FILE: &str = ".codex/config.toml";
 pub const CLAUDE_SETTINGS_FILE: &str = ".claude/settings.json";
 #[allow(dead_code)]
 pub const HERMES_PLUGIN_DIR: &str = ".hermes/plugins/hermip";
+#[allow(dead_code)]
 pub const NATIVE_NORMALIZATION_OUTCOME_FIELD: &str = "normalization_outcome";
+#[allow(dead_code)]
 pub const NATIVE_NON_GIT_OUTCOME: &str = "non_git";
 pub const SHARED_HOOK_EVENTS: [&str; 5] = [
     "SessionStart",

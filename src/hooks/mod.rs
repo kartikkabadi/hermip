@@ -6,7 +6,6 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use anyhow::anyhow;
-use serde_json::json;
 #[cfg(any(feature = "codex-hook", feature = "claude-hook"))]
 use serde_json::{Map, Value};
 
@@ -721,21 +720,6 @@ fn ensure_group_hooks(group: &mut Value) -> &mut Vec<Value> {
 fn hook_command_matches(hook: &Value, command: &str) -> bool {
     hook.get("type").and_then(Value::as_str) == Some("command")
         && hook.get("command").and_then(Value::as_str) == Some(command)
-}
-
-fn ensure_project_metadata(root: &Path, force: bool) -> Result<PathBuf> {
-    let path = root.join(HERMIP_PROJECT_FILE);
-    let project_name = root
-        .file_name()
-        .and_then(|name| name.to_str())
-        .unwrap_or("unknown")
-        .to_string();
-    let content = serde_json::to_string_pretty(&json!({
-        "project": project_name,
-        "repo_name": project_name,
-    }))? + "\n";
-    write_generated_file(&path, &content, force)?;
-    Ok(path)
 }
 
 fn write_generated_file(path: &Path, content: &str, force: bool) -> Result<()> {
