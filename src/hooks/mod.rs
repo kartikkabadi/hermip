@@ -535,6 +535,7 @@ def config_verify() -> dict:
         return {"ok": False, "error": str(e)}
 "#;
 
+#[cfg(feature = "claude-hook")]
 fn ensure_supported_install_scope(args: &HooksInstallArgs) -> Result<()> {
     if args.scope != HookInstallScope::Project {
         return Ok(());
@@ -550,6 +551,11 @@ fn ensure_supported_install_scope(args: &HooksInstallArgs) -> Result<()> {
         "Claude Code provider-native hook forwarding is global-only; Codex may use either ~/.codex/hooks.json or <repo>/.codex/hooks.json with the hermip bridge in ~/.hermip"
     )
     .into())
+}
+
+#[cfg(not(feature = "claude-hook"))]
+fn ensure_supported_install_scope(_args: &HooksInstallArgs) -> Result<()> {
+    Ok(())
 }
 
 fn resolve_install_root(args: &HooksInstallArgs) -> Result<PathBuf> {
