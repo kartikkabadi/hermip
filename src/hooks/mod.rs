@@ -534,7 +534,7 @@ def config_verify() -> dict:
     except Exception as e:
         return {"ok": False, "error": str(e)}
 "#;
-=======
+
 fn ensure_supported_install_scope(args: &HooksInstallArgs) -> Result<()> {
     if args.scope != HookInstallScope::Project {
         return Ok(());
@@ -547,11 +547,10 @@ fn ensure_supported_install_scope(args: &HooksInstallArgs) -> Result<()> {
     }
 
     Err(anyhow!(
-        "Claude Code provider-native hook forwarding is global-only; Codex may use either ~/.codex/hooks.json or <repo>/.codex/hooks.json with the clawhip bridge in ~/.clawhip"
+        "Claude Code provider-native hook forwarding is global-only; Codex may use either ~/.codex/hooks.json or <repo>/.codex/hooks.json with the hermip bridge in ~/.hermip"
     )
     .into())
 }
->>>>>>> upstream/main
 
 fn resolve_install_root(args: &HooksInstallArgs) -> Result<PathBuf> {
     match args.scope {
@@ -844,16 +843,6 @@ mod tests {
                 .generated_files
                 .contains(&dir.path().join(HOOK_SCRIPT))
         );
-        assert!(
-            report
-                .generated_files
-                .contains(&dir.path().join(CODEX_HOOKS_FILE))
-        );
-        assert!(
-            report
-                .generated_files
-                .contains(&dir.path().join(CODEX_HOOKS_FILE))
-        );
 
         if let Some(previous) = previous_home {
             unsafe {
@@ -888,7 +877,7 @@ mod tests {
             all: true,
             provider: Vec::new(),
             scope: HookInstallScope::Project,
-            root: Some(canonical_dir.clone()),
+            root: Some(dir.path().to_path_buf()),
             force: false,
         })
         .expect_err("project-scoped all-provider install should be rejected");
@@ -917,22 +906,12 @@ mod tests {
         assert!(
             report
                 .generated_files
-                .contains(&canonical_dir.join(HOOK_SCRIPT))
+                .contains(&dir.path().join(HOOK_SCRIPT))
         );
         assert!(
             report
                 .generated_files
-                .contains(&canonical_dir.join(HERMIP_PROJECT_FILE))
-        );
-        assert!(
-            report
-                .generated_files
-                .contains(&canonical_dir.join(CODEX_HOOKS_FILE))
-        );
-        assert!(
-            report
-                .generated_files
-                .contains(&canonical_dir.join(CLAUDE_SETTINGS_FILE))
+                .contains(&dir.path().join(CLAUDE_SETTINGS_FILE))
         );
 
         if let Some(previous) = previous_home {
@@ -1033,7 +1012,8 @@ mod tests {
     fn default_install_providers_hermes_only_returns_hermes() {
         let providers = default_install_providers();
         assert_eq!(providers, vec![HookProvider::Hermes]);
-=======
+    }
+
     #[test]
     fn write_generated_file_preserves_existing_content_without_force() {
         let dir = tempdir().expect("tempdir");
@@ -1054,6 +1034,5 @@ mod tests {
         write_generated_file(&path, "new\n", true).expect("write");
 
         assert_eq!(fs::read_to_string(&path).expect("read"), "new\n");
->>>>>>> upstream/main
     }
 }

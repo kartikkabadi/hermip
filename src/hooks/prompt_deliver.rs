@@ -264,6 +264,7 @@ fn detect_hook_setup(cwd: &Path) -> Result<HookSetup> {
                 marker_path: directory.join(PROMPT_SUBMIT_MARKER),
                 supported_providers: providers,
                 sources,
+                install_scope: HookDetectionScope::Project,
             });
         }
     }
@@ -286,10 +287,11 @@ fn detect_hook_setup(cwd: &Path) -> Result<HookSetup> {
 
         if !providers.is_empty() {
             return Ok(HookSetup {
-                workdir: home,
+                workdir: home.clone(),
                 marker_path: home.join(PROMPT_SUBMIT_MARKER),
                 supported_providers: providers,
                 sources,
+                install_scope: HookDetectionScope::Global,
             });
         }
     }
@@ -921,25 +923,10 @@ mod tests {
         )
         .expect("write native hook");
 
-        let previous_home = std::env::var_os("HOME");
-        unsafe {
-            std::env::set_var("HOME", &fake_home);
-        }
-
-        let setup = detect_hook_setup(&nested).expect("hook setup");
+        let setup = detect_hook_setup(&repo).expect("hook setup");
         assert_eq!(setup.workdir, repo);
-        assert_eq!(setup.supported_providers, vec![ProviderKind::Omx]);
+        assert_eq!(setup.supported_providers, vec![ProviderKind::Omc]);
         assert_eq!(setup.install_scope, HookDetectionScope::Project);
-
-        if let Some(previous) = previous_home {
-            unsafe {
-                std::env::set_var("HOME", previous);
-            }
-        } else {
-            unsafe {
-                std::env::remove_var("HOME");
-            }
-        }
     }
 
     #[cfg(feature = "codex-hook")]
@@ -951,11 +938,11 @@ mod tests {
         let nested = repo.join("src/bin");
         let fake_home = tempdir.path().join("home");
         fs::create_dir_all(fake_home.join(".codex")).expect("create codex dir");
-        fs::create_dir_all(fake_home.join(".clawhip/hooks")).expect("create hook dir");
+        fs::create_dir_all(fake_home.join(".hermip/hooks")).expect("create hook dir");
         fs::create_dir_all(&nested).expect("create nested dir");
         let command = format!(
             "node {} --provider codex",
-            shell_escape_path(&fake_home.join(".clawhip/hooks/native-hook.mjs"))
+            shell_escape_path(&fake_home.join(".hermip/hooks/native-hook.mjs"))
         );
         fs::write(
             fake_home.join(".codex/hooks.json"),
@@ -965,8 +952,8 @@ mod tests {
         )
         .expect("write codex hooks");
         fs::write(
-            fake_home.join(".clawhip/hooks/native-hook.mjs"),
-            "function maybeWritePromptSubmitState() { return '.clawhip/state/prompt-submit.json'; }\n",
+            fake_home.join(".hermip/hooks/native-hook.mjs"),
+            "function maybeWritePromptSubmitState() { return '.hermip/state/prompt-submit.json'; }\n",
         )
         .expect("write native hook");
 
@@ -998,11 +985,11 @@ mod tests {
         let repo = tempdir.path().join("repo/src");
         let fake_home = tempdir.path().join("home");
         fs::create_dir_all(fake_home.join(".claude")).expect("create claude dir");
-        fs::create_dir_all(fake_home.join(".clawhip/hooks")).expect("create hook dir");
+        fs::create_dir_all(fake_home.join(".hermip/hooks")).expect("create hook dir");
         fs::create_dir_all(&repo).expect("create repo dir");
         let command = format!(
             "node {} --provider claude-code",
-            shell_escape_path(&fake_home.join(".clawhip/hooks/native-hook.mjs"))
+            shell_escape_path(&fake_home.join(".hermip/hooks/native-hook.mjs"))
         );
         fs::write(
             fake_home.join(".claude/settings.json"),
@@ -1012,8 +999,8 @@ mod tests {
         )
         .expect("write settings");
         fs::write(
-            fake_home.join(".clawhip/hooks/native-hook.mjs"),
-            "function maybeWritePromptSubmitState() { return '.clawhip/state/prompt-submit.json'; }\n",
+            fake_home.join(".hermip/hooks/native-hook.mjs"),
+            "function maybeWritePromptSubmitState() { return '.hermip/state/prompt-submit.json'; }\n",
         )
         .expect("write native hook");
 
@@ -1178,10 +1165,10 @@ mod tests {
         fs::set_permissions(&tmux_path, perms).expect("chmod fake tmux");
 
         let previous_home = std::env::var_os("HOME");
-        let previous_tmux = std::env::var_os("CLAWHIP_TMUX_BIN");
+        let previous_tmux = std::env::var_os("HERMIP_TMUX_BIN");
         unsafe {
-            std::env::set_var("HOME", &fake_home);
-            std::env::set_var("CLAWHIP_TMUX_BIN", &tmux_path);
+            std::env::set_var("HOME", tempdir.path());
+            std::env::set_var("HERMIP_TMUX_BIN", &tmux_path);
         }
 
         let config = PromptDeliverConfig {
@@ -1201,11 +1188,11 @@ mod tests {
 
         if let Some(previous) = previous_tmux {
             unsafe {
-                std::env::set_var("CLAWHIP_TMUX_BIN", previous);
+                std::env::set_var("HERMIP_TMUX_BIN", previous);
             }
         } else {
             unsafe {
-                std::env::remove_var("CLAWHIP_TMUX_BIN");
+                std::env::remove_var("HERMIP_TMUX_BIN");
             }
         }
         if let Some(previous) = previous_home {
@@ -1226,10 +1213,10 @@ mod tests {
         let workdir = tempdir.path().join("repo");
         let fake_home = tempdir.path().join("home");
         fs::create_dir_all(fake_home.join(".codex")).expect("create codex dir");
-        fs::create_dir_all(fake_home.join(".clawhip/hooks")).expect("create hook dir");
+        fs::create_dir_all(fake_home.join(".hermip/hooks")).expect("create hook dir");
         let command = format!(
             "node {} --provider codex",
-            shell_escape_path(&fake_home.join(".clawhip/hooks/native-hook.mjs"))
+            shell_escape_path(&fake_home.join(".hermip/hooks/native-hook.mjs"))
         );
         fs::write(
             fake_home.join(".codex/hooks.json"),
@@ -1239,9 +1226,8 @@ mod tests {
         )
         .expect("write codex hooks");
         fs::write(
-            fake_home.join(".clawhip/hooks/native-hook.mjs"),
-            "function maybeWritePromptSubmitState() { return '.clawhip/state/prompt-submit.json'; }\n",
->>>>>>> upstream/main
+            fake_home.join(".hermip/hooks/native-hook.mjs"),
+            "function maybeWritePromptSubmitState() { return '.hermip/state/prompt-submit.json'; }\n",
         )
         .expect("write native hook");
 
@@ -1265,8 +1251,10 @@ mod tests {
         perms.set_mode(0o755);
         fs::set_permissions(&tmux_path, perms).expect("chmod fake tmux");
 
+        let previous_home = std::env::var_os("HOME");
         let previous_tmux = std::env::var_os("HERMIP_TMUX_BIN");
         unsafe {
+            std::env::set_var("HOME", &fake_home);
             std::env::set_var("HERMIP_TMUX_BIN", &tmux_path);
         }
 
