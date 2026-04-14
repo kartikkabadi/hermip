@@ -845,6 +845,7 @@ mod tests {
         }
     }
 
+    #[cfg(feature = "claude-hook")]
     #[test]
     fn install_project_scope_rejects_claude() {
         let dir = tempdir().expect("tempdir");
@@ -860,6 +861,7 @@ mod tests {
         assert!(error.to_string().contains("Claude Code"));
     }
 
+    #[cfg(feature = "claude-hook")]
     #[test]
     fn install_project_scope_rejects_all_when_claude_is_implied() {
         let dir = tempdir().expect("tempdir");
@@ -877,6 +879,7 @@ mod tests {
 
     #[test]
     #[serial]
+    #[cfg(feature = "claude-hook")]
     fn install_global_scope_writes_provider_files() {
         let dir = tempdir().expect("tempdir");
         let previous_home = std::env::var_os("HOME");
