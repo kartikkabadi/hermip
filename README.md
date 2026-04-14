@@ -1,22 +1,22 @@
-# clawhip
+# hermip
 
 <p align="center">
-  <img src="assets/clawhip-mascot.jpg" width="400" alt="clawhip mascot" />
+  <img src="assets/clawhip-mascot.jpg" width="400" alt="hermip mascot" />
 </p>
 
 <p align="center">
-  <a href="https://crates.io/crates/clawhip"><img src="https://img.shields.io/crates/v/clawhip.svg" alt="crates.io" /></a>
-  <a href="https://github.com/Yeachan-Heo/clawhip/stargazers"><img src="https://img.shields.io/github/stars/Yeachan-Heo/clawhip?style=social" alt="GitHub stars" /></a>
+  <a href="https://github.com/FactoryDroid/hermip"><img src="https://img.shields.io/badge/hermip-v0.6.7-blue" alt="hermip" /></a>
+  <a href="https://github.com/FactoryDroid/hermip/stargazers"><img src="https://img.shields.io/github/stars/FactoryDroid/hermip?style=social" alt="GitHub stars" /></a>
 </p>
 
-> **⭐ Optional support:** the interactive repo-local install paths (`./install.sh` and `clawhip install` from a clone) can offer to star this repo after a successful install when `gh` is installed and authenticated. Skip it with `--skip-star-prompt` or `CLAWHIP_SKIP_STAR_PROMPT=1`.
+> **⭐ Optional support:** the interactive repo-local install paths (`./install.sh` and `hermip install` from a clone) can offer to star this repo after a successful install when `gh` is installed and authenticated. Skip it with `--skip-star-prompt` or `HERMIP_SKIP_STAR_PROMPT=1`.
 
-clawhip is a daemon-first Discord notification router with a typed event pipeline, extracted sources, and a clean renderer/sink split.
+hermip is a fork of clawhip, a daemon-first Discord notification router with a typed event pipeline, extracted sources, and a clean renderer/sink split.
 
 Human install pitch:
 
 ```text
-Just tag @openclaw and say: install this https://github.com/Yeachan-Heo/clawhip
+Just tag @openclaw and say: install this https://github.com/FactoryDroid/hermip
 ```
 
 Then OpenClaw should:
@@ -61,23 +61,23 @@ cat payload.json | hermip native hook --provider codex
 
 Recommended installation model:
 
-- install the shared clawhip bridge in `~/.clawhip/hooks/native-hook.mjs`
+- install the shared hermip bridge in `~/.hermip/hooks/native-hook.mjs`
 - for Codex, align with the official hook contract: use either `~/.codex/hooks.json` or `<repo>/.codex/hooks.json`
 - for Claude Code, install the provider-native hook config globally in `~/.claude/settings.json`
 - keep provider config in the provider-owned config files
 - keep routing metadata in `.hermip/project.json`
 - use `.hermip/hooks/` only for additive augmentation such as frontmatter or recent context
 
-clawhip still pairs well with tmux when you want keyword/stale monitoring, but tmux is now
+hermip still pairs well with tmux when you want keyword/stale monitoring, but tmux is now
 optional and no longer the primary hook-registration surface.
 
 For tmux-backed recovery into an already-running hooked session, use:
 
 ```bash
-clawhip deliver --session <tmux-session> --prompt "..." --max-enters 4
+hermip deliver --session <tmux-session> --prompt "..." --max-enters 4
 ```
 
-`clawhip deliver` validates repo-local prompt-submit hook setup, confirms the target pane is an
+`hermip deliver` validates repo-local prompt-submit hook setup, confirms the target pane is an
 active Codex/Claude (including OMC/OMX wrapper) session, then retries Enter until
 `.hermip/state/prompt-submit.json` changes or the bounded retry limit is reached.
 
@@ -113,7 +113,7 @@ MENTION="<@1465264645320474637>"
 for entry in "${CHANNELS[@]}"; do
   IFS='|' read -r channel_id project_name <<< "$entry"
 
-  clawhip send \
+  hermip send \
     --channel "$channel_id" \
     --message "🔄 **[$project_name] Dev follow-up** $MENTION — check open PRs/issues, review open blockers, merge anything ready, and continue any stalled work."
 done
@@ -122,11 +122,11 @@ done
 You can also send one-off nudges manually:
 
 ```bash
-clawhip send \
+hermip send \
   --channel 1480171113253175356 \
   --message "🔄 **[clawhip] Dev follow-up** <@1465264645320474637> — check open PRs/issues, review blockers, and continue anything stalled."
 
-clawhip send \
+hermip send \
   --channel 1480171113253175357 \
   --message "🔄 **[gaebal-gajae-api] PR sweep** <@1465264645320474637> — review open PRs, merge anything ready, and post blockers on anything stuck."
 ```
@@ -168,19 +168,19 @@ Runtime support now includes a small bootstrap/inspection surface:
 
 ```bash
 # create a scaffold in the current repo
-clawhip memory init --project clawhip --channel discord-alerts --agent codex
+hermip memory init --project clawhip --channel discord-alerts --agent codex
 
 # inspect whether the expected files and directories exist
-clawhip memory status --project clawhip --channel discord-alerts --agent codex
+hermip memory status --project clawhip --channel discord-alerts --agent codex
 ```
 
-`clawhip memory init` creates `MEMORY.md`, `memory/README.md`, a daily shard, a project shard,
+`hermip memory init` creates `MEMORY.md`, `memory/README.md`, a daily shard, a project shard,
 topic files, and optional channel/agent shards without overwriting existing files unless you pass
 `--force`.
 
 ## Plugin architecture
 
-clawhip now includes a simple `plugins/` directory for tool-specific shell bridges.
+hermip now includes a simple `plugins/` directory for tool-specific shell bridges.
 Each plugin lives in its own subdirectory with:
 
 - `plugin.toml` for lightweight metadata
@@ -194,7 +194,7 @@ Built-in starter plugins:
 List installed plugins with:
 
 ```bash
-clawhip plugin list
+hermip plugin list
 ```
 
 ## Description
@@ -238,14 +238,14 @@ Expected downstream automation behavior:
 Reference repo URL:
 
 ```text
-https://github.com/Yeachan-Heo/clawhip
+https://github.com/FactoryDroid/hermip
 ```
 
 ## Discord bot setup
 
-> **Recommended:** Create a dedicated Discord bot for clawhip. Do not reuse your Clawdbot / OpenClaw bot token.
+> **Recommended:** Create a dedicated Discord bot for hermip. Do not reuse your Clawdbot / OpenClaw bot token.
 
-clawhip sends high-volume notifications (commits, PRs, tmux keyword alerts, stale warnings). Using a separate bot keeps these cleanly separated from your AI chat bot.
+hermip sends high-volume notifications (commits, PRs, tmux keyword alerts, stale warnings). Using a separate bot keeps these cleanly separated from your AI chat bot.
 
 1. Create a new bot at [Discord Developer Portal](https://discord.com/developers/applications) (e.g. "CCNotifier")
 2. Copy the bot token
@@ -254,7 +254,7 @@ clawhip sends high-volume notifications (commits, PRs, tmux keyword alerts, stal
 
 ```toml
 [providers.discord]
-token = "your-dedicated-clawhip-bot-token"
+token = "your-dedicated-hermip-bot-token"
 default_channel = "your-default-channel-id"
 
 [dispatch]
@@ -266,7 +266,7 @@ Legacy `[discord]` config is still accepted and normalized at load time.
 
 `[dispatch].routine_batch_window_secs` controls the default Discord-only routine burst batch window. Leave it unset to keep the 5-second default, or set it to `0` to disable routine batching entirely. In v1, grouped routine bursts suppress route/event mentions for 2+ items, while explicit failure/stale/CI paths still bypass the routine batcher.
 
-`[dispatch].ci_batch_window_secs` controls how long clawhip waits before flushing a GitHub CI batch summary. Leave it unset to keep the 30-second default, or increase it for longer workflows that finish jobs over several minutes.
+`[dispatch].ci_batch_window_secs` controls how long hermip waits before flushing a GitHub CI batch summary. Leave it unset to keep the 30-second default, or increase it for longer workflows that finish jobs over several minutes.
 
 ## Discord webhook setup
 
@@ -275,27 +275,27 @@ Webhook mode works without a bot token.
 Quick start:
 
 ```bash
-clawhip setup --webhook "https://discord.com/api/webhooks/..."
+hermip setup --webhook "https://discord.com/api/webhooks/..."
 ```
 
 Bounded setup presets also support:
 
 ```bash
-clawhip setup \
+hermip setup \
   --bot-token "discord-bot-token" \
   --default-channel "1234567890" \
   --default-format alert \
   --daemon-base-url "http://127.0.0.1:25294"
 ```
 
-`clawhip setup` stays non-interactive and intentionally limited to five presets only:
+`hermip setup` stays non-interactive and intentionally limited to five presets only:
 - Discord webhook quickstart route
 - Discord bot token
 - Default channel
 - Default message format
 - Daemon base URL
 
-Advanced routes and monitor definitions are still edited manually in the config file or revisited through the bounded `clawhip config` editor surface.
+Advanced routes and monitor definitions are still edited manually in the config file or revisited through the bounded `hermip config` editor surface.
 
 Route example:
 
@@ -346,7 +346,7 @@ Input sources in v0.3.0:
 - GitHub webhook ingress plus GitHub polling source
 - git monitor source
 - tmux monitor source
-- `clawhip tmux new` / `clawhip tmux watch` registration path
+- `hermip tmux new` / `hermip tmux watch` registration path
 
 ## Input -> behavior -> verification
 
@@ -354,7 +354,7 @@ Input sources in v0.3.0:
 
 Input:
 ```bash
-clawhip send --channel <id> --message "text"
+hermip send --channel <id> --message "text"
 ```
 
 Behavior:
@@ -363,7 +363,7 @@ Behavior:
 - Discord message emitted
 
 Verification:
-- `clawhip status`
+- `hermip status`
 - inspect configured Discord channel for rendered payload
 
 ### 2. GitHub issue preset family
@@ -371,7 +371,7 @@ Verification:
 Input:
 - GitHub webhook `issues.opened`
 - built-in GitHub issue monitor detection
-- CLI thin client `clawhip github issue-opened ...`
+- CLI thin client `hermip github issue-opened ...`
 
 Behavior:
 - emit `github.issue-opened`
@@ -425,7 +425,7 @@ Verification:
 Input:
 - GitHub webhook `pull_request.*`
 - built-in PR monitor state changes
-- CLI thin client `clawhip github pr-status-changed ...`
+- CLI thin client `hermip github pr-status-changed ...`
 
 Behavior:
 - emit `github.pr-status-changed`
@@ -442,7 +442,7 @@ Verification:
 
 Input:
 - built-in git monitor polling local repo
-- CLI thin client `clawhip git commit ...`
+- CLI thin client `hermip git commit ...`
 
 Behavior:
 - emit `git.commit`
@@ -498,10 +498,10 @@ reference.
 
 Input:
 ```bash
-clawhip agent started --name worker-1 --session sess-123 --project my-repo
-clawhip agent blocked --name worker-1 --summary "waiting for review"
-clawhip agent finished --name worker-1 --elapsed 300 --summary "PR created"
-clawhip agent failed --name worker-1 --error "build failed"
+hermip agent started --name worker-1 --session sess-123 --project my-repo
+hermip agent blocked --name worker-1 --summary "waiting for review"
+hermip agent finished --name worker-1 --elapsed 300 --summary "PR created"
+hermip agent failed --name worker-1 --error "build failed"
 ```
 
 Behavior:
@@ -520,7 +520,7 @@ Verification:
 
 Input:
 - built-in tmux monitor detects configured keyword
-- CLI thin client `clawhip tmux keyword ...`
+- CLI thin client `hermip tmux keyword ...`
 
 Behavior:
 - emit `tmux.keyword`
@@ -535,7 +535,7 @@ Verification:
 
 Input:
 - built-in tmux stale detection
-- CLI thin client `clawhip tmux stale ...`
+- CLI thin client `hermip tmux stale ...`
 
 Behavior:
 - emit `tmux.stale`
@@ -552,12 +552,12 @@ Preferred input:
 ```bash
 hermip native hook --provider codex --file payload.json
 hermip native hook --provider claude --file payload.json
-clawhip tmux list
+hermip tmux list
 ```
 
 Fallback/debug input:
 ```bash
-clawhip tmux new -s <session> \
+hermip tmux new -s <session> \
   --mention '<@id>' \
   --keywords 'error,PR created,FAILED,complete' \
   --stale-minutes 10 \
@@ -568,14 +568,14 @@ clawhip tmux new -s <session> \
   --shell /bin/zsh \
   -- command args
 
-clawhip tmux watch -s <existing-session> \
+hermip tmux watch -s <existing-session> \
   --mention '<@id>' \
   --keywords 'error,PR created,FAILED,complete' \
   --stale-minutes 10 \
   --format alert \
   --retry-enter true
 
-clawhip deliver \
+hermip deliver \
   --session <existing-session> \
   --prompt "continue from the latest blocker and open a PR to dev" \
   --max-enters 4
@@ -588,7 +588,7 @@ Behavior:
 - `deliver` is the prompt recovery path for an already-running hooked tmux-backed provider session
 - `tmux list` shows active daemon-known watches with source, registration timestamp, and parent-process info
 - final delivery still goes through daemon routing
-- `deliver` refuses arbitrary shells and requires prompt-submit-aware hook setup (`clawhip hooks install --provider codex --scope global|project` for Codex, with the bridge in `~/.clawhip`, or `clawhip hooks install --provider claude-code --scope global` for Claude Code)
+- `deliver` refuses arbitrary shells and requires prompt-submit-aware hook setup (`hermip hooks install --provider codex --scope global|project` for Codex, with the bridge in `~/.hermip`, or `hermip hooks install --provider claude-code --scope global` for Claude Code)
 
 Routing note:
 - session names are labels for operators, not routing authority
@@ -606,9 +606,9 @@ Verification:
 Input:
 ```bash
 ./install.sh
-clawhip install
-clawhip update --restart
-clawhip uninstall --remove-systemd --remove-config
+hermip install
+hermip update --restart
+hermip uninstall --remove-systemd --remove-config
 ```
 
 Behavior:
@@ -620,9 +620,9 @@ Behavior:
 - uninstall removes runtime artifacts
 
 Verification:
-- `clawhip --help`
-- `clawhip status`
-- `systemctl status clawhip` when systemd-enabled
+- `hermip --help`
+- `hermip status`
+- `systemctl status hermip` when systemd-enabled
 
 ## Preset event families
 
@@ -733,18 +733,18 @@ Safety:
 ### From crates.io
 
 ```bash
-cargo install clawhip
+cargo install hermip
 ```
 
-Published at [crates.io/crates/clawhip](https://crates.io/crates/clawhip). Requires Rust toolchain.
+Published at [crates.io/crates/clawhip](https://crates.io/crates/clawhip) (upstream). Requires Rust toolchain.
 
 ### Prebuilt binary installer (recommended, no Rust needed)
 
 ```bash
-curl --proto '=https' --tlsv1.2 -LsSf https://github.com/Yeachan-Heo/clawhip/releases/latest/download/clawhip-installer.sh | sh
+curl --proto '=https' --tlsv1.2 -LsSf https://github.com/FactoryDroid/hermip/releases/latest/download/hermip-installer.sh | sh
 ```
 
-This installs the latest prebuilt `clawhip` binary from GitHub Releases into `$CARGO_HOME/bin` (typically `~/.cargo/bin`).
+This installs the latest prebuilt `hermip` binary from GitHub Releases into `$CARGO_HOME/bin` (typically `~/.cargo/bin`).
 
 Release artifacts are generated for these Rust target triples: `x86_64-unknown-linux-gnu`, `aarch64-unknown-linux-gnu`, `x86_64-apple-darwin`, and `aarch64-apple-darwin`.
 
@@ -755,35 +755,35 @@ Release artifacts are generated for these Rust target triples: `x86_64-unknown-l
 ./install.sh --systemd
 ```
 
-`install.sh` now tries the latest prebuilt release first and falls back to `cargo install --path . --force` when a matching release asset is unavailable. If Cargo is needed for the fallback path but not installed, the script prints Rustup setup instructions. When `--systemd` is used, the installed binary is also copied to `/usr/local/bin/clawhip` so the bundled service unit can start it.
+`install.sh` now tries the latest prebuilt release first and falls back to `cargo install --path . --force` when a matching release asset is unavailable. If Cargo is needed for the fallback path but not installed, the script prints Rustup setup instructions. When `--systemd` is used, the installed binary is also copied to `/usr/local/bin/hermip` so the bundled service unit can start it.
 
-In interactive terminals, both the repo-local installer and `clawhip install` may offer an optional post-install GitHub star prompt via authenticated `gh api` access. It never runs automatically, is skipped when `gh` is missing or unauthenticated, and can be disabled with `./install.sh --skip-star-prompt`, `clawhip install --skip-star-prompt`, or `CLAWHIP_SKIP_STAR_PROMPT=1`.
+In interactive terminals, both the repo-local installer and `hermip install` may offer an optional post-install GitHub star prompt via authenticated `gh api` access. It never runs automatically, is skipped when `gh` is missing or unauthenticated, and can be disabled with `./install.sh --skip-star-prompt`, `hermip install --skip-star-prompt`, or `HERMIP_SKIP_STAR_PROMPT=1`.
 
 ### Runtime lifecycle commands
 
 ```bash
-clawhip install
-clawhip install --systemd
-clawhip install --skip-star-prompt
-clawhip update --restart
-clawhip uninstall
-clawhip uninstall --remove-systemd --remove-config
+hermip install
+hermip install --systemd
+hermip install --skip-star-prompt
+hermip update --restart
+hermip uninstall
+hermip uninstall --remove-systemd --remove-config
 ```
 
-`clawhip install` now matches the repo-local installer's optional GitHub star prompt behavior: it only appears in interactive terminals, is skipped when `gh` is missing or unauthenticated, never stars automatically, and can be disabled with `clawhip install --skip-star-prompt` or `CLAWHIP_SKIP_STAR_PROMPT=1 clawhip install`.
+`hermip install` now matches the repo-local installer's optional GitHub star prompt behavior: it only appears in interactive terminals, is skipped when `gh` is missing or unauthenticated, never stars automatically, and can be disabled with `hermip install --skip-star-prompt` or `HERMIP_SKIP_STAR_PROMPT=1 hermip install`.
 
 ## systemd contract
 
 Unit file:
 
 ```text
-deploy/clawhip.service
+deploy/hermip.service
 ```
 
 Expected install path:
-- copy to `/etc/systemd/system/clawhip.service`
+- copy to `/etc/systemd/system/hermip.service`
 - `systemctl daemon-reload`
-- `systemctl enable --now clawhip`
+- `systemctl enable --now hermip`
 
 ## Live verification runbook
 
@@ -810,16 +810,16 @@ Required live sign-off presets:
 ## Minimal operational commands
 
 ```bash
-clawhip                 # start daemon
-clawhip status          # daemon health
-clawhip config          # bounded preset editor / config inspection
-clawhip send ...        # thin client custom event
-clawhip github ...      # thin client GitHub event
-clawhip git ...         # thin client git event
-clawhip agent ...       # thin client agent lifecycle event
+hermip                 # start daemon
+hermip status          # daemon health
+hermip config          # bounded preset editor / config inspection
+hermip send ...        # thin client custom event
+hermip github ...      # thin client GitHub event
+hermip git ...         # thin client git event
+hermip agent ...       # thin client agent lifecycle event
 hermip native hook ... # provider-native hook thin client
-clawhip tmux ...        # thin client / wrapper surface
-clawhip plugin list     # list installed/bundled shell-hook plugins
+hermip tmux ...        # thin client / wrapper surface
+hermip plugin list     # list installed/bundled shell-hook plugins
 ```
 
 ## Internal PR fast-path
